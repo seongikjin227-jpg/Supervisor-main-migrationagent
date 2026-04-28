@@ -126,13 +126,6 @@ def finalize_node(state: MigrationState) -> dict:
 
     if state["status"] == "PASS":
         update_job_status(job.map_id, "PASS", elapsed, state["db_attempts"])
-        # 차기 SQL 튜닝 에이전트를 위해 NEXT_SQL_INFO 에 데이터 생성
-        try:
-            from agents.data_migration.domain.mapping.repository import save_sql_tuning_job
-            save_sql_tuning_job(job, state.get("current_migration_sql", ""))
-        except ImportError:
-             logger.warning("[Graph] save_sql_tuning_job 함수를 찾을 수 없어 SQL 튜닝 대상을 생성하지 못했습니다.")
-        
         log_business_history(job.map_id, "INFO", "INFO", "VERIFY", "PASS", "Migration Success", state["db_attempts"], mig_kind)
         logger.info(f"[Graph:FINISH] map_id={job.map_id} | >>> 성공 <<<")
         return {"elapsed_time": elapsed, "status": "PASS"}

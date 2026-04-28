@@ -90,12 +90,12 @@ def _serialize_mapping_rules(mapping_rules: list[MappingRuleItem]) -> str:
 
 
 def _normalize_table_token(token: str) -> str:
-    value = (token or "").strip().strip('"').strip("'")
+    value = (token or "").strip().strip("[]").strip().strip('"').strip("'").strip()
     if not value:
         return ""
     if "." in value:
         value = value.split(".")[-1]
-    return value.upper()
+    return value.strip("[]").strip().strip('"').strip("'").upper()
 
 
 def _load_target_tables(job: SqlInfoJob) -> set[str]:
@@ -141,17 +141,21 @@ def _select_mapping_rules_for_job(job: SqlInfoJob, mapping_rules: list[MappingRu
     if not mapping_rules:
         return []
 
+    target_tables = _load_target_tables(job)
+    if target_tables:
+        return [
+            rule
+            for rule in mapping_rules
+            if _fr_table_contains_any_target(rule.fr_table, target_tables)
+        ]
+
     rules_by_fr: dict[str, list[MappingRuleItem]] = {}
     for rule in mapping_rules:
         fr_norm = _normalize_table_token(rule.fr_table)
         if fr_norm:
             rules_by_fr.setdefault(fr_norm, []).append(rule)
 
-    target_tables = _load_target_tables(job)
-    selected_fr_tables = {table for table in target_tables if table in rules_by_fr}
-    selected_fr_tables.update(
-        _extract_referenced_fr_tables_from_source_sql(job.source_sql, set(rules_by_fr.keys()))
-    )
+    selected_fr_tables = _extract_referenced_fr_tables_from_source_sql(job.source_sql, set(rules_by_fr.keys()))
 
     if not selected_fr_tables:
         return mapping_rules
@@ -160,6 +164,18 @@ def _select_mapping_rules_for_job(job: SqlInfoJob, mapping_rules: list[MappingRu
     for fr_table in sorted(selected_fr_tables):
         filtered.extend(rules_by_fr.get(fr_table, []))
     return filtered
+
+
+def _fr_table_contains_any_target(fr_table: str, target_tables: set[str]) -> bool:
+    fr_text = (fr_table or "").upper()
+    if not fr_text or not target_tables:
+        return False
+
+    for table in target_tables:
+        pattern = rf"(?<![A-Z0-9_$#]){re.escape(table)}(?![A-Z0-9_$#])"
+        if re.search(pattern, fr_text):
+            return True
+    return False
 
 
 def serialize_tuning_examples_for_prompt(tuning_examples: list[dict[str, str]]) -> str:

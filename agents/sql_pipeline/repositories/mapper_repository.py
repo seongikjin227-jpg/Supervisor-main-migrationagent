@@ -1,5 +1,8 @@
 """매핑 룰 조회 리포지토리."""
 
+import json
+import re
+
 from agents.sql_pipeline.services.db_runtime import (
     get_connection,
     get_mapping_rule_detail_table,
@@ -29,6 +32,8 @@ def get_all_mapping_rules() -> list[MappingRuleItem]:
         FROM {map_table} M
         JOIN {detail_table} D
           ON M.MAP_ID = D.MAP_ID
+        WHERE UPPER(TRIM(M.TARGET_YN)) = 'Y'
+          AND UPPER(TRIM(M.STATUS)) = 'PASS'
         ORDER BY M.MAP_ID, D.MAP_DTL
     """
 
@@ -47,3 +52,72 @@ def get_all_mapping_rules() -> list[MappingRuleItem]:
                 )
             )
     return rules
+
+
+def get_unready_target_tables(target_table_value: str | None) -> list[str]:
+    target_tables = _parse_target_tables(target_table_value)
+    if not target_tables:
+        return []
+
+    map_table = get_mapping_rule_table()
+    query = f"""
+        SELECT M.FR_TABLE, M.STATUS
+        FROM {map_table} M
+        WHERE UPPER(TRIM(M.TARGET_YN)) = 'Y'
+    """
+
+    rows: list[tuple[str, str]] = []
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query)
+        for fr_table, status in cursor.fetchall():
+            rows.append((_to_text(fr_table).upper(), _to_text(status).strip().upper()))
+
+    unready: list[str] = []
+    for target_table in sorted(target_tables):
+        matched_statuses = [
+            status
+            for fr_table, status in rows
+            if _fr_table_contains_target(fr_table, target_table)
+        ]
+        if not matched_statuses or any(status != "PASS" for status in matched_statuses):
+            unready.append(target_table)
+    return unready
+
+
+def _parse_target_tables(raw_value: str | None) -> set[str]:
+    raw = _to_text(raw_value).strip()
+    if not raw:
+        return set()
+
+    tokens: list[str] = []
+    if raw.startswith("[") or raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                tokens = [str(item) for item in parsed]
+            elif isinstance(parsed, str):
+                tokens = [parsed]
+        except Exception:
+            tokens = []
+
+    if not tokens:
+        tokens = re.split(r"[,\s;|]+", raw)
+
+    return {normalized for token in tokens if (normalized := _normalize_table_token(token))}
+
+
+def _normalize_table_token(token: str) -> str:
+    value = (token or "").strip().strip("[]").strip().strip('"').strip("'").strip()
+    if not value:
+        return ""
+    if "." in value:
+        value = value.split(".")[-1]
+    return value.strip("[]").strip().strip('"').strip("'").upper()
+
+
+def _fr_table_contains_target(fr_table: str, target_table: str) -> bool:
+    if not fr_table or not target_table:
+        return False
+    pattern = rf"(?<![A-Z0-9_$#]){re.escape(target_table)}(?![A-Z0-9_$#])"
+    return bool(re.search(pattern, fr_table.upper()))

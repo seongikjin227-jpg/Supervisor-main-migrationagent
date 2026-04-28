@@ -6,8 +6,13 @@ import time
 
 from agents.sql_pipeline.core.exceptions import LLMRateLimitError
 from agents.sql_pipeline.core.logger import logger
-from agents.sql_pipeline.repositories.mapper_repository import get_all_mapping_rules
-from agents.sql_pipeline.repositories.result_repository import update_block_rag_content, update_cycle_result
+from agents.sql_pipeline.repositories.mapper_repository import get_all_mapping_rules, get_unready_target_tables
+from agents.sql_pipeline.repositories.result_repository import (
+    reset_tuning_state,
+    update_block_rag_content,
+    update_cycle_result,
+    update_job_skip,
+)
 from agents.sql_pipeline.services.binding_service import bind_sets_to_json, build_bind_sets, extract_bind_param_names
 from agents.sql_pipeline.services.llm_service import (
     generate_bind_sql,
@@ -31,13 +36,8 @@ from agents.sql_pipeline.workflow.state import JobExecutionState
 class MappingRuleProvider:
     """매핑 룰을 한 번 읽고 여러 job에서 재사용한다."""
 
-    def __init__(self) -> None:
-        self._mapping_rules: list | None = None
-
     def get_rules(self) -> list:
-        if self._mapping_rules is None:
-            self._mapping_rules = get_all_mapping_rules()
-        return self._mapping_rules
+        return get_all_mapping_rules()
 
 
 class TobeSqlGenerationAgent:
@@ -230,6 +230,18 @@ class TobeMultiAgentCoordinator:
         max_retries = 3
         stage = "INIT"
         state = self._build_state(job=job, last_error=None)
+
+        if (job.status or "").strip().upper() == "FAIL":
+            reset_tuning_state(job.row_id)
+            job.tuned_sql = None
+            job.tuned_test = None
+
+        unready_target_tables = get_unready_target_tables(job.target_table)
+        if unready_target_tables:
+            reason = "TARGET_MAPPING_NOT_READY: " + ",".join(unready_target_tables)
+            update_job_skip(row_id=job.row_id, reason=reason)
+            logger.warning(f"[TobeMultiAgentCoordinator] ({job_key}) skipped: {reason}")
+            return
 
         while retry_count <= max_retries:
             state = self._build_state(job=job, last_error=state.last_error)

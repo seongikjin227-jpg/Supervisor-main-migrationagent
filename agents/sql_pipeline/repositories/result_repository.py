@@ -150,6 +150,11 @@ def get_pending_jobs() -> list[SqlInfoJob]:
     )
     tuned_sql_column = "TUNED_SQL" if "TUNED_SQL" in available_columns else "CAST(NULL AS VARCHAR2(4000)) AS TUNED_SQL"
     tuned_test_column = "TUNED_TEST" if "TUNED_TEST" in available_columns else "CAST(NULL AS VARCHAR2(4000)) AS TUNED_TEST"
+    tuning_job_exclusion_clause = (
+        "AND NOT (UPPER(TRIM(STATUS)) = 'PASS' AND TO_SQL_TEXT IS NOT NULL AND UPPER(TRIM(TUNED_TEST)) IN ('READY', 'FAIL'))"
+        if "TUNED_TEST" in available_columns
+        else ""
+    )
 
     query = f"""
         SELECT ROWIDTOCHAR(ROWID) AS RID,
@@ -157,7 +162,8 @@ def get_pending_jobs() -> list[SqlInfoJob]:
                TO_SQL_TEXT, {tuned_sql_column}, {tuned_test_column}, BIND_SQL, BIND_SET, TEST_SQL, STATUS, LOG,
                UPD_TS, EDITED_YN, {select_correct_cols}
         FROM {table}
-        WHERE UPPER(TRIM(STATUS)) IN ('FAIL', 'READY', 'PENDING') OR STATUS IS NULL
+        WHERE (UPPER(TRIM(STATUS)) IN ('FAIL', 'READY', 'PENDING', 'SKIP') OR STATUS IS NULL)
+          {tuning_job_exclusion_clause}
         ORDER BY UPD_TS NULLS FIRST, TO_CHAR(SPACE_NM), TO_CHAR(SQL_ID)
     """
 
@@ -196,6 +202,7 @@ def get_tuning_jobs() -> list:
         FROM {table}
         WHERE UPPER(TRIM(TUNED_TEST)) IN ('READY', 'FAIL')
           AND TO_SQL_TEXT IS NOT NULL
+          AND UPPER(TRIM(STATUS)) = 'PASS'
           {batch_limit_clause}
         ORDER BY UPD_TS NULLS FIRST, TO_CHAR(SPACE_NM), TO_CHAR(SQL_ID)
     """
@@ -235,6 +242,53 @@ def update_tuning_error(row_id: str, error_msg: str) -> None:
             conn.commit()
     except Exception as e:
         logger.error(f"[Repo] Tuning error update failed: {e}")
+
+
+def update_job_skip(row_id: str, reason: str) -> None:
+    table = get_result_table()
+    payload = _fit_payload_to_column_limits(
+        table=table,
+        values={
+            "STATUS": "SKIP",
+            "LOG": f"SKIP reason={reason}",
+        },
+    )
+    query = f"""
+        UPDATE {table}
+        SET STATUS = :1,
+            LOG = :2,
+            UPD_TS = CURRENT_TIMESTAMP
+        WHERE ROWID = CHARTOROWID(:3)
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, [payload["STATUS"], payload["LOG"], row_id])
+        conn.commit()
+
+
+def reset_tuning_state(row_id: str) -> None:
+    table = get_result_table()
+    available_columns = _get_available_columns(table)
+    set_clauses = ["UPD_TS = CURRENT_TIMESTAMP"]
+    if "TUNED_SQL" in available_columns:
+        set_clauses.append("TUNED_SQL = NULL")
+    if "TUNED_TEST" in available_columns:
+        set_clauses.append("TUNED_TEST = NULL")
+    if "BLOCK_RAG_CONTENT" in available_columns:
+        set_clauses.append("BLOCK_RAG_CONTENT = NULL")
+
+    if len(set_clauses) == 1:
+        return
+
+    query = f"""
+        UPDATE {table}
+        SET {", ".join(set_clauses)}
+        WHERE ROWID = CHARTOROWID(:1)
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, [row_id])
+        conn.commit()
 
 def increment_batch_count(row_id: str) -> None:
     table = get_result_table()

@@ -161,29 +161,3 @@ def is_first_job_for_target(map_id: int, to_table: str, priority: int) -> bool:
     except Exception as e:
         logger.error(f"[Repository] 최초 작업 여부 확인 중 오류: {e}")
         return True
-
-def save_sql_tuning_job(job: MappingRule, migration_sql: str):
-    """마이그레이션 성공 시 NEXT_SQL_INFO 테이블에 튜닝 대상 데이터를 생성합니다."""
-    import os
-    target_table = os.getenv("RESULT_TABLE", "NEXT_SQL_INFO")
-    
-    query = f"""
-        INSERT INTO {target_table} (
-            TAG_KIND, SPACE_NM, SQL_ID, FR_SQL_TEXT, TARGET_TABLE, STATUS, UPD_TS
-        ) VALUES (
-            :1, :2, :3, :4, :5, :6, CURRENT_TIMESTAMP
-        )
-    """
-    
-    tag_kind = os.getenv("MIG_KIND", "DB_MIG")
-    space_nm = "MIG" 
-    sql_id = str(job.map_id)
-    
-    try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(query, (tag_kind, space_nm, sql_id, migration_sql, job.to_table, "READY"))
-            conn.commit()
-            logger.info(f"[Repository] {target_table} 에 튜닝 작업 생성 완료 (MapID: {job.map_id})")
-    except Exception as e:
-        logger.warning(f"[Repository] {target_table} 기록 실패 (이미 존재하거나 DB오류): {e}")
