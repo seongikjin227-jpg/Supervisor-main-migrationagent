@@ -87,23 +87,20 @@ def increment_batch_count(map_id: int):
 def update_job_status(map_id: int, status: str, elapsed_seconds: int = 0, retry_count: int = 0) -> bool:
     logger.info(f"[Repository] map_id={map_id} | DB 상태를 {status} 로 업데이트 (Retry: {retry_count})")
 
-    # SKIP 상태인 경우 다음 사이클에서 다시 시도할 수 있도록 USE_YN을 'Y'로 유지
-    use_yn_val = 'N' if status != 'SKIP' else 'Y'
-
     query = """
         UPDATE NEXT_MIG_INFO
         SET STATUS = :1,
-            USE_YN = :2,
+            USE_YN = 'N',
             UPD_TS = CURRENT_TIMESTAMP,
-            ELAPSED_SECONDS = :3,
-            RETRY_COUNT = :4
-        WHERE MAP_ID = :5
+            ELAPSED_SECONDS = :2,
+            RETRY_COUNT = :3
+        WHERE MAP_ID = :4
     """
 
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(query, (status, use_yn_val, elapsed_seconds, retry_count, map_id))
+            cursor.execute(query, (status, elapsed_seconds, retry_count, map_id))
             rowcount = cursor.rowcount
             conn.commit()
 
