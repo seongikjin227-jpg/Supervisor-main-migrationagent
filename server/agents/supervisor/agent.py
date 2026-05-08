@@ -56,7 +56,7 @@ class SupervisorAgent:
     def run(self) -> None:
         """SIGINT/SIGTERM 을 등록하고 Supervisor 그래프를 실행한다."""
         logger.info("============================================================")
-        logger.info(" Multi-Agent Supervisor 시작 (LLM Tool-Calling Mode)")
+        logger.info(" Multi-Agent Supervisor 시작 (Deterministic Batch Mode)")
         logger.info("  ├─ Tool 1: run_data_migration  — 데이터 이관")
         logger.info("  ├─ Tool 2: run_sql_conversion  — SQL 변환")
         logger.info("  └─ Tool 3: run_sql_tuning      — SQL 튜닝")
