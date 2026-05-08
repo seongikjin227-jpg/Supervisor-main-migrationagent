@@ -5,6 +5,7 @@ from server.tools.context import (
     finish_cycle_metrics,
     get_registries,
     init_callbacks,
+    start_batch_metrics,
     start_cycle_metrics,
 )
 
@@ -14,6 +15,7 @@ __all__ = [
     "run_sql_tuning",
     "init_callbacks",
     "get_registries",
+    "start_batch_metrics",
     "start_cycle_metrics",
     "finish_cycle_metrics",
 ]

@@ -150,6 +150,7 @@ def get_pending_jobs() -> list[SqlInfoJob]:
     )
     tuned_sql_column = "TUNED_SQL" if "TUNED_SQL" in available_columns else "CAST(NULL AS VARCHAR2(4000)) AS TUNED_SQL"
     tuned_test_column = "TUNED_TEST" if "TUNED_TEST" in available_columns else "CAST(NULL AS VARCHAR2(4000)) AS TUNED_TEST"
+    batch_limit_clause = "AND NVL(BATCH_CNT, 0) < 30" if "BATCH_CNT" in available_columns else ""
     tuning_job_exclusion_clause = (
         "AND NOT (UPPER(TRIM(STATUS)) = 'PASS' AND TO_SQL_TEXT IS NOT NULL AND UPPER(TRIM(TUNED_TEST)) IN ('READY', 'FAIL'))"
         if "TUNED_TEST" in available_columns
@@ -164,6 +165,7 @@ def get_pending_jobs() -> list[SqlInfoJob]:
         FROM {table}
         WHERE (UPPER(TRIM(STATUS)) IN ('FAIL', 'READY', 'PENDING', 'SKIP') OR STATUS IS NULL)
           {tuning_job_exclusion_clause}
+          {batch_limit_clause}
         ORDER BY UPD_TS NULLS FIRST, TO_CHAR(SPACE_NM), TO_CHAR(SQL_ID)
     """
 

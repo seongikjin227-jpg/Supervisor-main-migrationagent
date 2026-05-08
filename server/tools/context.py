@@ -20,6 +20,7 @@ callbacks: dict = {}
 
 # ── 현재 Supervisor cycle의 agent별 처리량/소요시간 누적 ───────────────────────
 cycle_metrics: dict = {}
+batch_metrics: dict = {}
 
 def init_callbacks(**kwargs):
     """에이전트 인스턴스와 로거 등의 콜백을 등록합니다."""
@@ -31,12 +32,19 @@ def get_registries():
     return mig_registry, sql_registry, tuning_registry
 
 
+def start_batch_metrics(batch_no: int) -> None:
+    """Supervisor 프로세스 실행 1회를 식별하는 batch 번호를 등록합니다."""
+    batch_metrics.clear()
+    batch_metrics["batch_no"] = batch_no
+
+
 def start_cycle_metrics(cycle_no: int) -> None:
     """현재 cycle의 처리 시간 집계를 시작합니다."""
     cycle_metrics.clear()
     cycle_metrics.update(
         {
             "cycle_no": cycle_no,
+            "batch_no": batch_metrics.get("batch_no", 0),
             "started_at": datetime.now(),
             "start_counter": time.perf_counter(),
             "agents": {},
@@ -85,11 +93,13 @@ def finish_cycle_metrics(logger=None) -> None:
 
     finished_at = datetime.now()
     cycle_no = int(cycle_metrics["cycle_no"])
+    batch_no = int(cycle_metrics.get("batch_no") or 0)
     started_at = cycle_metrics["started_at"]
     total_elapsed = time.perf_counter() - float(cycle_metrics["start_counter"])
 
     rows = [
         build_metric_row(
+            batch_no=batch_no,
             cycle_no=cycle_no,
             agent_name="SUPERVISOR_CYCLE",
             job_count=total_jobs,
@@ -104,6 +114,7 @@ def finish_cycle_metrics(logger=None) -> None:
     for agent_name, metric in agents.items():
         rows.append(
             build_metric_row(
+                batch_no=batch_no,
                 cycle_no=cycle_no,
                 agent_name=agent_name,
                 job_count=metric["job_count"],

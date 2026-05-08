@@ -26,6 +26,12 @@ def _shorten_sql_for_log(sql_text: str, max_len: int = 700) -> str:
     return one_line[:max_len] + "...(truncated)"
 
 
+def _read_lob_value(value: Any) -> Any:
+    if value is not None and hasattr(value, "read"):
+        return value.read()
+    return value
+
+
 def execute_binding_query(binding_query_sql: str, max_rows: int = 20) -> list[dict[str, Any]]:
     clean_sql = _prepare_runtime_sql(binding_query_sql, stage="EXECUTE_BIND_SQL")
     if not clean_sql:
@@ -46,7 +52,7 @@ def execute_binding_query(binding_query_sql: str, max_rows: int = 20) -> list[di
     for row in rows:
         bind_item: dict[str, Any] = {}
         for idx, column in enumerate(columns):
-            bind_item[column] = row[idx]
+            bind_item[column] = _read_lob_value(row[idx])
         bind_sets.append(bind_item)
     return bind_sets
 
@@ -71,7 +77,7 @@ def execute_test_query(test_sql: str) -> list[dict[str, Any]]:
     for row in rows:
         item: dict[str, Any] = {}
         for idx, col in enumerate(columns):
-            item[col] = row[idx]
+            item[col] = _read_lob_value(row[idx])
         result.append(item)
     return result
 
@@ -127,7 +133,8 @@ def evaluate_status_from_test_rows(rows: list[dict[str, Any]]) -> str:
 
 
 def _prepare_runtime_sql(sql_text: str, stage: str) -> str:
-    clean_sql = (sql_text or "").replace("﻿", "").strip().rstrip(";").strip()
+    sql_text = _read_lob_value(sql_text)
+    clean_sql = (str(sql_text or "")).replace("﻿", "").strip().rstrip(";").strip()
     if not clean_sql:
         return clean_sql
 

@@ -218,6 +218,8 @@ def _replace_bind_tokens(sql_text: str, context: dict[str, Any]) -> str:
 
 
 def _sql_literal(value: Any) -> str:
+    if value is not None and hasattr(value, "read"):
+        value = value.read()
     if value is None:
         return "NULL"
     if isinstance(value, bool):

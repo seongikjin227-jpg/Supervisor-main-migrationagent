@@ -42,6 +42,7 @@ TUNING_MAX_ITER      = int(os.getenv("TOBE_SQL_TUNING_MAX_ITERATIONS", "1"))
 # ── Planner ──────────────────────────────────────────────────────────────────
 PLANNER_ENABLED          = os.getenv("PLANNER_ENABLED", "true").lower() == "true"
 PLANNER_MAX_MIG_PER_CYCLE = int(os.getenv("PLANNER_MAX_MIG_PER_CYCLE", "5"))
+SUPERVISOR_RECURSION_LIMIT = int(os.getenv("SUPERVISOR_RECURSION_LIMIT", "10000"))
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 RUNTIME_DIR  = _ROOT / "runtime"

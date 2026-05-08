@@ -2,6 +2,13 @@ from server.core.db_migration import get_connection
 from server.core.logger import logger
 from server.agents.migration.sql_utils import split_sql_script, clean_sql_statement
 
+
+def _read_lob_value(value):
+    if value is not None and hasattr(value, "read"):
+        return value.read()
+    return value
+
+
 def execute_verification(sql: str) -> tuple[bool, str]:
     """양 DB의 정합성을 대조하는 검증 SQL 실행"""
     if not sql.strip():
@@ -33,6 +40,7 @@ def execute_verification(sql: str) -> tuple[bool, str]:
 
             for row in last_rows:
                 for col_val in row:
+                    col_val = _read_lob_value(col_val)
                     if col_val is None or str(col_val) != "0":
                         return False, f"Mismatch found (NULL or non-zero DIFF): {row}"
 

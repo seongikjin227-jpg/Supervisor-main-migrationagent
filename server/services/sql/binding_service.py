@@ -221,6 +221,8 @@ def bind_sets_to_json(bind_sets: list[dict[str, Any]]) -> str:
 
 def _json_default(value: Any):
     """JSON 직렬화 불가 타입을 안전한 표현으로 변환한다."""
+    if value is not None and hasattr(value, "read"):
+        value = value.read()
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, (datetime, date)):

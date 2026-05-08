@@ -243,6 +243,8 @@ def _normalize_bind_name(token: str) -> str:
 
 
 def _sql_literal(value) -> str:
+    if value is not None and hasattr(value, "read"):
+        value = value.read()
     if value is None:
         return "NULL"
     if isinstance(value, bool):
@@ -276,8 +278,8 @@ def _build_deterministic_test_sql(from_sql: str, tobe_sql: str, bind_sets: list[
         selects.append(
             "SELECT "
             f"{idx} AS CASE_NO, "
-            f"(SELECT COUNT(*) FROM ({rendered_from}) f) AS FROM_COUNT, "
-            f"(SELECT COUNT(*) FROM ({rendered_to}) t) AS TO_COUNT "
+            f"(SELECT COUNT(*) FROM (SELECT 1 FROM ({rendered_from}) f) f_cnt) AS FROM_COUNT, "
+            f"(SELECT COUNT(*) FROM (SELECT 1 FROM ({rendered_to}) t) t_cnt) AS TO_COUNT "
             "FROM DUAL"
         )
     return " UNION ALL ".join(selects)

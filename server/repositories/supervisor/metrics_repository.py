@@ -24,11 +24,11 @@ def insert_agent_run_metrics(rows: list[dict[str, Any]]) -> None:
     table = qualify_table_name(METRICS_TABLE)
     query = f"""
         INSERT INTO {table} (
-            CYCLE_NO, AGENT_NAME, JOB_COUNT, SUCCESS_COUNT, FAIL_COUNT, SKIP_COUNT,
+            BATCH_NO, CYCLE_NO, AGENT_NAME, JOB_COUNT, SUCCESS_COUNT, FAIL_COUNT, SKIP_COUNT,
             STARTED_AT, FINISHED_AT, ELAPSED_SECONDS
         )
         VALUES (
-            :cycle_no, :agent_name, :job_count, :success_count, :fail_count, :skip_count,
+            :batch_no, :cycle_no, :agent_name, :job_count, :success_count, :fail_count, :skip_count,
             :started_at, :finished_at, :elapsed_seconds
         )
     """
@@ -43,6 +43,7 @@ def insert_agent_run_metrics(rows: list[dict[str, Any]]) -> None:
 
 def build_metric_row(
     *,
+    batch_no: int,
     cycle_no: int,
     agent_name: str,
     job_count: int,
@@ -54,6 +55,7 @@ def build_metric_row(
     elapsed_seconds: float,
 ) -> dict[str, Any]:
     return {
+        "batch_no": batch_no,
         "cycle_no": cycle_no,
         "agent_name": agent_name,
         "job_count": job_count,

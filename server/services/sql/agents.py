@@ -243,7 +243,7 @@ class TobeMultiAgentCoordinator:
             logger.warning(f"[TobeMultiAgentCoordinator] ({job_key}) skipped: {reason}")
             return
 
-        while retry_count <= max_retries:
+        while retry_count < max_retries:
             state = self._build_state(job=job, last_error=state.last_error)
             try:
                 graph_result = self.graph.invoke({"execution": state, "terminal_action": None})
@@ -263,7 +263,7 @@ class TobeMultiAgentCoordinator:
                         f"[TobeMultiAgentCoordinator] ({job_key}) stage={stage} status=FAIL "
                         f"(retry={retry_count}/{max_retries}): {state.last_error}"
                     )
-                    if retry_count <= max_retries:
+                    if retry_count < max_retries:
                         self._sleep_with_backoff(retry_count)
                         continue
                     break
@@ -279,6 +279,8 @@ class TobeMultiAgentCoordinator:
                     f"[TobeMultiAgentCoordinator] ({job_key}) stage={stage} LLM rate limit "
                     f"(retry={retry_count}/{max_retries}): {state.last_error}"
                 )
+                if retry_count >= max_retries:
+                    break
                 self._sleep_with_backoff(retry_count)
 
             except Exception as exc:
@@ -288,6 +290,8 @@ class TobeMultiAgentCoordinator:
                     f"[TobeMultiAgentCoordinator] ({job_key}) stage={stage} error "
                     f"(retry={retry_count}/{max_retries}): {state.last_error}"
                 )
+                if retry_count >= max_retries:
+                    break
                 self._sleep_with_backoff(retry_count)
 
         self._persist_failure(state=state, stage=stage, retry_count=retry_count)
