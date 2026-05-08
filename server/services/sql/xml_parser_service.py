@@ -833,48 +833,15 @@ def _extract_target_tables_from_sql(sql_text: str) -> list[str]:
     return candidates
 
 
-def _load_test_mapping_tables_from_env() -> set[str]:
-    """
-    Load test mapping tables from env var TEST_MAPPING_TABLES.
-    Accepted formats:
-    - comma/space/semicolon/pipe delimited string
-    - JSON array string
-    """
-    raw = _require_env("TEST_MAPPING_TABLES")
-    tokens: list[str] = []
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, list):
-            tokens = [str(item) for item in parsed]
-        else:
-            tokens = re.split(r"[,\s;|]+", raw)
-    except Exception:
-        tokens = re.split(r"[,\s;|]+", raw)
-
-    mapped: set[str] = set()
-    for token in tokens:
-        normalized = _normalize_table_name(token)
-        if not normalized:
-            continue
-        mapped.add(normalized)
-        if "." in normalized:
-            mapped.add(normalized.split(".")[-1])
-    if not mapped:
-        raise ValueError("TEST_MAPPING_TABLES is set but no valid table name was parsed.")
-    return mapped
-
-
 def cleanup_next_sql_info_rows() -> dict[str, int]:
-    """Stage4: 비활성/테스트매핑 범위 밖 행을 정리한다."""
+    """Stage4: 비활성 SQL을 정리하고 TARGET_TABLE을 보정한다."""
     result_table = get_result_table()
     active_table = _validate_sql_identifier(_require_env("ACTIVE_SQL_ID_TABLE"))
     active_column = _validate_sql_identifier(os.getenv("ACTIVE_SQL_ID_COLUMN", "SQL_ID"))
-    test_mapping_tables = _load_test_mapping_tables_from_env()
 
     logger.info(
         "[XMLParser] Stage4 started "
-        f"(active_table={active_table}, active_column={active_column}, "
-        f"test_mapping_tables={len(test_mapping_tables)})"
+        f"(active_table={active_table}, active_column={active_column})"
     )
 
     # ACTIVE 테이블은 반드시 full id(NAMESPACE.SQL_ID) 형식을 사용해야 한다.
@@ -927,7 +894,6 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
     to_delete_rowids: list[str] = []
     target_table_updates: list[tuple[str, str]] = []
     deleted_not_active = 0
-    deleted_not_in_test_mapping = 0
     updated_target_table = 0
 
     for rowid, space_nm, sql_id, target_table_value, fr_sql_text, edit_fr_sql in rows:
@@ -949,23 +915,6 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
         if serialized_target_table != current_serialized:
             target_table_updates.append((serialized_target_table, rowid))
             updated_target_table += 1
-
-        if not target_tables:
-            to_delete_rowids.append(rowid)
-            deleted_not_in_test_mapping += 1
-            continue
-
-        all_mapped = True
-        for target_table in target_tables:
-            table_key = target_table.upper()
-            table_short = table_key.split(".")[-1]
-            if table_key not in test_mapping_tables and table_short not in test_mapping_tables:
-                all_mapped = False
-                break
-
-        if not all_mapped:
-            to_delete_rowids.append(rowid)
-            deleted_not_in_test_mapping += 1
 
     if target_table_updates:
         with get_connection() as conn:
@@ -1001,14 +950,12 @@ def cleanup_next_sql_info_rows() -> dict[str, int]:
         f"(updated_target_table={updated_target_table}, "
         f"deleted_total={len(to_delete_rowids)}, "
         f"deleted_not_active={deleted_not_active}, "
-        f"deleted_not_in_test_mapping={deleted_not_in_test_mapping}, "
         f"remaining_total={remaining_total})"
     )
     return {
         "updated_target_table": updated_target_table,
         "deleted_total": len(to_delete_rowids),
         "deleted_not_active": deleted_not_active,
-        "deleted_not_in_test_mapping": deleted_not_in_test_mapping,
         "remaining_total": remaining_total,
     }
 
