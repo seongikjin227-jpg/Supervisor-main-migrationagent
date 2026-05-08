@@ -214,11 +214,7 @@ def get_tuning_jobs() -> list:
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(query)
-            rows = cursor.fetchall()
-            if rows:
-                logger.info(f"[Repo] SqlTuning pending jobs found: {len(rows)}")
-
-            for row in rows:
+            for row in cursor.fetchall():
                 jobs.append(_row_to_sql_info_job(row))
     except Exception as e:
         logger.error(f"[Repo] SqlTuning pending job lookup failed: {e}")
