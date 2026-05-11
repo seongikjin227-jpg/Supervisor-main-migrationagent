@@ -29,6 +29,10 @@ _SQL_LINE_COMMENT_PATTERN = re.compile(r"--[^\n]*")
 _SQL_SINGLE_QUOTE_PATTERN = re.compile(r"'(?:''|[^'])*'")
 _SQL_MYBATIS_PLACEHOLDER_PATTERN = re.compile(r"[#$]\{\s*[^}]+\s*\}")
 _SQL_XML_TAG_PATTERN = re.compile(r"<[^>]+>")
+_SQL_SCHEMA_STRIP_PROTECTED_PATTERN = re.compile(
+    r"/\*.*?\*/|--[^\n]*|'(?:''|[^'])*'|[#$]\{\s*[^}]+\s*\}|<[^>]+>",
+    flags=re.DOTALL,
+)
 
 
 @dataclass
@@ -121,6 +125,27 @@ def _normalize_table_name(token: str) -> str:
     if not re.search(r"[A-Za-z0-9_]", value):
         return ""
     return value.upper()
+
+
+def _short_table_name(table_name: str) -> str:
+    """SCHEMA.TABLE 형태에서 테이블명만 반환한다."""
+    normalized = _normalize_table_name(table_name)
+    if not normalized:
+        return ""
+    return normalized.split(".")[-1].strip('"')
+
+
+def _strip_schema_from_target_tables(value: Any) -> list[str]:
+    """TARGET_TABLE 값을 스키마 제거/중복 제거된 테이블명 목록으로 변환한다."""
+    results: list[str] = []
+    seen = set()
+    for table_name in _parse_stored_target_table(value):
+        short_name = _short_table_name(table_name)
+        if not short_name or short_name in seen:
+            continue
+        results.append(short_name)
+        seen.add(short_name)
+    return results
 
 
 def parse_single_mapper_xml(xml_path: Path) -> list[ParsedSqlItem]:
@@ -833,6 +858,196 @@ def _extract_target_tables_from_sql(sql_text: str) -> list[str]:
     return candidates
 
 
+def _schema_table_parts(table_name: str) -> tuple[str, str] | None:
+    """SCHEMA.TABLE 토큰을 (schema, table)로 분해한다."""
+    normalized = _normalize_table_name(table_name)
+    if "." not in normalized:
+        return None
+    parts = [part.strip().strip('"') for part in normalized.split(".") if part.strip()]
+    if len(parts) < 2:
+        return None
+    schema_name = parts[-2]
+    table_short = parts[-1]
+    if not schema_name or not table_short:
+        return None
+    return schema_name, table_short
+
+
+def _collect_schema_table_pairs(target_table_value: Any, *sql_texts: Any) -> list[tuple[str, str]]:
+    """TARGET_TABLE/SQL 테이블 후보에서 스키마가 붙은 테이블 목록을 모은다."""
+    pairs: list[tuple[str, str]] = []
+    seen = set()
+
+    def _add_candidates(candidates: list[str]) -> None:
+        for candidate in candidates:
+            parts = _schema_table_parts(candidate)
+            if not parts or parts in seen:
+                continue
+            pairs.append(parts)
+            seen.add(parts)
+
+    if isinstance(target_table_value, (list, tuple, set)):
+        _add_candidates([_to_text(item) for item in target_table_value])
+    else:
+        _add_candidates(_parse_stored_target_table(target_table_value))
+
+    for sql_text in sql_texts:
+        _add_candidates(_extract_target_tables_from_sql(_to_text(sql_text)))
+
+    return pairs
+
+
+def _replace_schema_table_segment(segment: str, pairs: list[tuple[str, str]]) -> str:
+    """보호되지 않은 SQL 조각에서 SCHEMA.TABLE을 TABLE로 치환한다."""
+    result = segment
+    # 긴 이름부터 처리해 부분 치환 가능성을 낮춘다.
+    for schema_name, table_name in sorted(pairs, key=lambda item: len(".".join(item)), reverse=True):
+        unquoted = re.compile(
+            rf"(?<![A-Za-z0-9_$#\"])"
+            rf"({re.escape(schema_name)})\s*\.\s*({re.escape(table_name)})"
+            rf"(?![A-Za-z0-9_$#\"])",
+            flags=re.IGNORECASE,
+        )
+        result = unquoted.sub(lambda match: match.group(2), result)
+
+        quoted = re.compile(
+            rf'"{re.escape(schema_name)}"\s*\.\s*"{re.escape(table_name)}"',
+            flags=re.IGNORECASE,
+        )
+        result = quoted.sub(lambda match: f'"{table_name}"', result)
+    return result
+
+
+def _strip_schema_from_sql_text(sql_text: str, pairs: list[tuple[str, str]]) -> str:
+    """SQL 텍스트에서 테이블 식별자의 스키마 접두어만 제거한다."""
+    text = _to_text(sql_text)
+    if not text or not pairs:
+        return text
+
+    parts: list[str] = []
+    last_end = 0
+    for match in _SQL_SCHEMA_STRIP_PROTECTED_PATTERN.finditer(text):
+        parts.append(_replace_schema_table_segment(text[last_end : match.start()], pairs))
+        parts.append(match.group(0))
+        last_end = match.end()
+    parts.append(_replace_schema_table_segment(text[last_end:], pairs))
+    return "".join(parts)
+
+
+def strip_schema_qualifiers_from_next_sql_info() -> dict[str, int]:
+    """Stage5: TARGET_TABLE/FR_SQL_TEXT/EDIT_FR_SQL에서 스키마명을 제거하고 READY 처리한다."""
+    result_table = get_result_table()
+    logger.info("[XMLParser] Stage5 started")
+
+    rows: list[tuple[str, str, str, str]] = []
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT ROWIDTOCHAR(ROWID), TARGET_TABLE, FR_SQL_TEXT, EDIT_FR_SQL
+            FROM {result_table}
+            """
+        )
+        for row in cursor.fetchall():
+            rows.append(
+                (
+                    _to_text(row[0]).strip(),
+                    _to_text(row[1]),
+                    _to_text(row[2]),
+                    _to_text(row[3]),
+                )
+            )
+
+    updates: list[tuple[str, str, str, str]] = []
+    updated_target_table = 0
+    updated_fr_sql_text = 0
+    updated_edit_fr_sql = 0
+
+    for rowid, target_table_value, fr_sql_text, edit_fr_sql in rows:
+        pairs = _collect_schema_table_pairs(target_table_value, fr_sql_text, edit_fr_sql)
+        stripped_target_tables = _strip_schema_from_target_tables(target_table_value)
+        serialized_target_table = (
+            json.dumps(stripped_target_tables, ensure_ascii=False) if stripped_target_tables else ""
+        )
+        stripped_fr_sql_text = _strip_schema_from_sql_text(fr_sql_text, pairs)
+        stripped_edit_fr_sql = _strip_schema_from_sql_text(edit_fr_sql, pairs)
+
+        current_target_table = target_table_value.strip()
+        if (
+            serialized_target_table == current_target_table
+            and stripped_fr_sql_text == fr_sql_text
+            and stripped_edit_fr_sql == edit_fr_sql
+        ):
+            continue
+
+        if serialized_target_table != current_target_table:
+            updated_target_table += 1
+        if stripped_fr_sql_text != fr_sql_text:
+            updated_fr_sql_text += 1
+        if stripped_edit_fr_sql != edit_fr_sql:
+            updated_edit_fr_sql += 1
+        updates.append((serialized_target_table, stripped_fr_sql_text, stripped_edit_fr_sql, rowid))
+
+    if updates:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.setinputsizes(
+                target_table=oracledb.DB_TYPE_CLOB,
+                fr_sql_text=oracledb.DB_TYPE_CLOB,
+                edit_fr_sql=oracledb.DB_TYPE_CLOB,
+                rowid=oracledb.DB_TYPE_VARCHAR,
+            )
+            cursor.executemany(
+                f"""
+                UPDATE {result_table}
+                SET TARGET_TABLE = :target_table,
+                    FR_SQL_TEXT = :fr_sql_text,
+                    EDIT_FR_SQL = :edit_fr_sql,
+                    UPD_TS = CURRENT_TIMESTAMP
+                WHERE ROWID = CHARTOROWID(:rowid)
+                """,
+                [
+                    {
+                        "target_table": target_table,
+                        "fr_sql_text": fr_sql_text,
+                        "edit_fr_sql": edit_fr_sql,
+                        "rowid": rowid,
+                    }
+                    for target_table, fr_sql_text, edit_fr_sql, rowid in updates
+                ],
+            )
+            conn.commit()
+
+    ready_updated = 0
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            UPDATE {result_table}
+            SET STATUS = 'READY',
+                UPD_TS = CURRENT_TIMESTAMP
+            """
+        )
+        ready_updated = max(int(cursor.rowcount or 0), 0)
+        conn.commit()
+
+    logger.info(
+        "[XMLParser] Stage5 completed "
+        f"(updated_rows={len(updates)}, "
+        f"updated_target_table={updated_target_table}, "
+        f"updated_fr_sql_text={updated_fr_sql_text}, "
+        f"updated_edit_fr_sql={updated_edit_fr_sql}, "
+        f"ready_updated={ready_updated})"
+    )
+    return {
+        "updated_rows": len(updates),
+        "updated_target_table": updated_target_table,
+        "updated_fr_sql_text": updated_fr_sql_text,
+        "updated_edit_fr_sql": updated_edit_fr_sql,
+        "ready_updated": ready_updated,
+    }
+
+
 def cleanup_next_sql_info_rows() -> dict[str, int]:
     """Stage4: 비활성 SQL을 정리하고 TARGET_TABLE을 보정한다."""
     result_table = get_result_table()
@@ -964,16 +1179,18 @@ def run_all_xml_parser_stages(
     source_dir: str | None = None,
     output_dir: str | None = None,
 ) -> dict[str, dict[str, int]]:
-    """stage1~stage4를 순서대로 실행하고 통계를 반환한다."""
+    """stage1~stage5를 순서대로 실행하고 통계를 반환한다."""
     stage1 = parse_mapper_dir_to_json(source_dir=source_dir, output_dir=output_dir)
     stage2 = upsert_json_to_next_sql_info(data_dir=output_dir)
     stage3 = expand_include_to_edit_sql()
     stage4 = cleanup_next_sql_info_rows()
+    stage5 = strip_schema_qualifiers_from_next_sql_info()
     return {
         "stage1": stage1,
         "stage2": stage2,
         "stage3": stage3,
         "stage4": stage4,
+        "stage5": stage5,
     }
 
 
@@ -982,7 +1199,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MyBatis XML parser utility stages")
     parser.add_argument(
         "stage",
-        choices=["stage1", "stage2", "stage3", "stage4", "all"],
+        choices=["stage1", "stage2", "stage3", "stage4", "stage5", "all"],
         help="Stage to run",
     )
     parser.add_argument("--source-dir", dest="source_dir", default=None, help="Mapper XML source directory")
@@ -1006,6 +1223,9 @@ def _main():
         return
     if args.stage == "stage4":
         cleanup_next_sql_info_rows()
+        return
+    if args.stage == "stage5":
+        strip_schema_qualifiers_from_next_sql_info()
         return
     run_all_xml_parser_stages(source_dir=args.source_dir, output_dir=args.output_dir)
 

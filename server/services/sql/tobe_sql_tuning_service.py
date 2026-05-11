@@ -43,18 +43,25 @@ class TobeSqlTuningService:
         ordered_blocks.extend(block for block in blocks if block["block_type"] != "SUBQUERY")
 
         try:
-            return self._retrieve_by_vector_search(ordered_blocks, rules)
+            payloads = self._retrieve_by_vector_search(ordered_blocks, rules)
         except Exception as exc:
             logger.warning(
                 "[TobeSqlTuningService] vector search fallback to token search "
                 f"(reason={type(exc).__name__}: {exc})"
             )
-            return [self._build_lexical_match_payload(block, rules) for block in ordered_blocks]
+            payloads = [self._build_lexical_match_payload(block, rules) for block in ordered_blocks]
+
+        self._increment_rule_hit_counts(self._extract_prompt_rule_ids(payloads), expected_rule_type="SEARCH")
+        return payloads
 
     def load_universal_tuning_rules(self) -> list[dict[str, Any]]:
         try:
             rules = self._load_universal_from_db()
             if rules:
+                self._increment_rule_hit_counts(
+                    [str(rule.get("rule_id", "")).strip() for rule in rules],
+                    expected_rule_type="GENERAL",
+                )
                 return rules
         except Exception as exc:
             logger.warning(
@@ -140,6 +147,70 @@ class TobeSqlTuningService:
             "example_bad_sql": rule["example_bad_sql"],
             "example_tuned_sql": rule["example_tuned_sql"],
         }
+
+    @staticmethod
+    def _extract_prompt_rule_ids(payloads: list[dict[str, Any]]) -> list[str]:
+        """프롬프트에 들어갈 SEARCH 룰 ID를 중복 포함해 추출한다."""
+        rule_ids: list[str] = []
+        for payload in payloads:
+            matches = payload.get("top_rule_matches", [])
+            if not isinstance(matches, list):
+                continue
+            for match in matches:
+                if not isinstance(match, dict):
+                    continue
+                rule_id = str(match.get("rule_id", "")).strip()
+                if rule_id:
+                    rule_ids.append(rule_id)
+        return rule_ids
+
+    def _increment_rule_hit_counts(self, rule_ids: list[str], expected_rule_type: str | None = None) -> None:
+        """프롬프트에 들어간 NEXT_SQL_RULES 룰의 HIT_CNT를 증가시킨다."""
+        clean_rule_ids = [rule_id for rule_id in rule_ids if rule_id]
+        if not clean_rule_ids:
+            return
+
+        try:
+            from server.services.sql.db_runtime import get_connection
+
+            with get_connection() as conn:
+                cur = conn.cursor()
+                columns = self._get_table_columns(cur, "NEXT_SQL_RULES")
+                if "HIT_CNT" not in columns:
+                    logger.warning("[TobeSqlTuningService] NEXT_SQL_RULES.HIT_CNT column not found; skip hit count")
+                    return
+
+                type_filter = ""
+                if expected_rule_type and "RULE_TYPE" in columns:
+                    type_filter = " AND UPPER(TRIM(NVL(RULE_TYPE, 'SEARCH'))) = :rule_type"
+
+                update_sql = f"""
+                    UPDATE NEXT_SQL_RULES
+                    SET HIT_CNT = NVL(HIT_CNT, 0) + 1
+                    WHERE RULE_ID = :rule_id
+                    {type_filter}
+                """
+                if type_filter:
+                    binds = [
+                        {
+                            "rule_id": rule_id,
+                            "rule_type": expected_rule_type,
+                        }
+                        for rule_id in clean_rule_ids
+                    ]
+                else:
+                    binds = [{"rule_id": rule_id} for rule_id in clean_rule_ids]
+                cur.executemany(update_sql, binds)
+                conn.commit()
+            logger.info(
+                f"[TobeSqlTuningService] rule HIT_CNT incremented "
+                f"(rule_type={expected_rule_type or 'ANY'}, hits={len(clean_rule_ids)})"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[TobeSqlTuningService] failed to increment rule HIT_CNT "
+                f"({type(exc).__name__}: {exc})"
+            )
 
     def _embed_texts(self, texts: list[str]) -> list[list[float]]:
         endpoint = self._embedding_endpoint(self.embed_base_url)
