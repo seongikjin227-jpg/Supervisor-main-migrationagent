@@ -166,7 +166,18 @@ def get_pending_jobs() -> list[SqlInfoJob]:
         WHERE (UPPER(TRIM(STATUS)) IN ('FAIL', 'READY', 'PENDING', 'SKIP') OR STATUS IS NULL)
           {tuning_job_exclusion_clause}
           {batch_limit_clause}
-        ORDER BY UPD_TS NULLS FIRST, TO_CHAR(SPACE_NM), TO_CHAR(SQL_ID)
+        ORDER BY
+          CASE
+            WHEN UPPER(TRIM(STATUS)) = 'READY' THEN 1
+            WHEN UPPER(TRIM(STATUS)) = 'FAIL' THEN 2
+            WHEN UPPER(TRIM(STATUS)) = 'SKIP' THEN 3
+            WHEN UPPER(TRIM(STATUS)) = 'PENDING' THEN 4
+            WHEN STATUS IS NULL THEN 5
+            ELSE 9
+          END,
+          UPD_TS NULLS FIRST,
+          TO_CHAR(SPACE_NM),
+          TO_CHAR(SQL_ID)
     """
 
     jobs: list[SqlInfoJob] = []
