@@ -12,7 +12,7 @@ from langchain_openai import ChatOpenAI
 
 from server.core.exceptions import LLMRateLimitError
 from server.services.sql.domain_models import MappingRuleItem, SqlInfoJob
-from server.services.sql.binding_service import build_bind_target_hints
+from server.services.sql.binding_service import build_bind_param_metadata, build_bind_target_hints
 from server.services.sql.mybatis_materializer_service import materialize_sql
 from server.services.sql.prompt_service import build_prompt_messages
 from server.services.sql.tobe_sql_tuning_service import tobe_sql_tuning_service
@@ -421,6 +421,9 @@ def generate_bind_sql(
     last_error: str | None = None,
 ) -> str:
     bind_target_hints = build_bind_target_hints(tobe_sql=tobe_sql, source_sql=job.source_sql)
+    bind_param_metadata = build_bind_param_metadata(tobe_sql)
+    if not bind_param_metadata.get("all_bind_params"):
+        bind_param_metadata = build_bind_param_metadata(job.source_sql)
     return call_llm_api(
         api_key=None,
         model=None,
@@ -429,6 +432,7 @@ def generate_bind_sql(
             "bind_sql_prompt.json",
             from_sql=job.source_sql,
             tobe_sql=tobe_sql,
+            bind_param_metadata_json=json.dumps(bind_param_metadata, ensure_ascii=False, indent=2),
             bind_target_hints_json=json.dumps(bind_target_hints, ensure_ascii=False, indent=2),
             last_error=last_error or "None",
         ),

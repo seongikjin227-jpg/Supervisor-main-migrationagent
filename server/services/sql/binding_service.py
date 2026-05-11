@@ -60,6 +60,33 @@ def extract_bind_param_names(sql_text: str) -> list[str]:
     return names
 
 
+def build_bind_param_metadata(sql_text: str) -> dict[str, Any]:
+    """bind 파라미터를 필수/조건부 그룹으로 분류한다."""
+    source = sql_text or ""
+    all_params = extract_bind_param_names(source)
+    conditional_groups: list[dict[str, Any]] = []
+    conditional_seen: set[str] = set()
+
+    for match in _IF_TEST_PATTERN.finditer(source):
+        test_expr = (match.group(1) or "").strip()
+        body_start = match.end()
+        close_match = re.search(r"</\s*if\s*>", source[body_start:], flags=re.IGNORECASE)
+        if not close_match:
+            continue
+        body = source[body_start : body_start + close_match.start()]
+        params = extract_bind_param_names(body)
+        if not params:
+            continue
+        conditional_groups.append({"test": test_expr, "params": params})
+        conditional_seen.update(params)
+
+    return {
+        "required_bind_params": [param for param in all_params if param not in conditional_seen],
+        "conditional_bind_params": conditional_groups,
+        "all_bind_params": all_params,
+    }
+
+
 def _extract_if_param_groups(sql_text: str) -> list[list[str]]:
     """`<if test='...'>` 조건식을 분석해 분기 커버리지 그룹을 추출한다."""
     if not sql_text:

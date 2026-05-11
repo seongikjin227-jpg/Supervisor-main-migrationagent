@@ -5,15 +5,26 @@
   "inputs": {
     "from_sql": "{from_sql}",
     "tobe_sql": "{tobe_sql}",
+    "bind_param_metadata_json": "{bind_param_metadata_json}",
     "bind_target_hints_json": "{bind_target_hints_json}",
     "last_error": "{last_error}"
   },
   "rules": [
     "Return only one executable SELECT statement.",
     "Use real table data rather than synthetic literals.",
-    "Each output column alias must exactly match the bind parameter name.",
+    "Read bind_param_metadata_json. Return every parameter listed in all_bind_params as one SELECT output column.",
+    "Parameters listed in required_bind_params are mandatory parameters outside MyBatis <if> blocks. Prefer non-NULL real values for them whenever real data exists.",
+    "Parameters listed in conditional_bind_params are optional parameters used inside MyBatis <if> blocks. They should be non-NULL only for candidate rows where the corresponding test expression is satisfied.",
+    "Each output column alias must exactly match the bind parameter name and should be an unquoted Oracle alias.",
+    "Use bind_target_hints_json as the primary mapping from bind parameter names to physical source columns.",
+    "Preserve combination validity: values for multiple bind parameters must come from the same real source row or from rows connected by the query's original join predicates. Do not combine values selected independently from unrelated rows.",
+    "Prefer SELECT DISTINCT from the same source table or from the original joined row shape. Do not use independent scalar subqueries, cross joins, UNION of unrelated parameter values, or synthetic Cartesian combinations to fill different bind columns.",
+    "For candidate rows where a conditional <if> test is not satisfied, parameters used only inside that inactive block must be returned as NULL.",
+    "If a MyBatis <if test> expression cannot be evaluated from available bind parameters or source columns, treat that <if> block as inactive and do not invent values only to activate it.",
+    "Generate a small but useful set of distinct bind cases that covers both NULL and non-NULL optional parameters when those combinations exist in real data.",
+    "Use Oracle 11g-compatible syntax only. Do not use LIMIT, FETCH FIRST, OFFSET, or non-Oracle functions.",
     "Do not emit MyBatis tags, placeholders, markdown, comments, JSON, or multiple statements.",
-    "Limit output to a small set of distinct bind cases."
+    "Limit output to at most 50 candidate rows using Oracle ROWNUM if a row limit is needed."
   ],
-  "user_instruction": "Generate one executable Oracle SQL statement only."
+  "user_instruction": "Generate one executable Oracle SELECT statement only. The query must return valid same-row bind parameter combinations, not independently mixed parameter values."
 }

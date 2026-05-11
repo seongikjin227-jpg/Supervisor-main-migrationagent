@@ -995,7 +995,7 @@ def strip_schema_qualifiers_from_next_sql_info() -> dict[str, int]:
                 target_table=oracledb.DB_TYPE_CLOB,
                 fr_sql_text=oracledb.DB_TYPE_CLOB,
                 edit_fr_sql=oracledb.DB_TYPE_CLOB,
-                rowid=oracledb.DB_TYPE_VARCHAR,
+                rid=oracledb.DB_TYPE_VARCHAR,
             )
             cursor.executemany(
                 f"""
@@ -1004,14 +1004,14 @@ def strip_schema_qualifiers_from_next_sql_info() -> dict[str, int]:
                     FR_SQL_TEXT = :fr_sql_text,
                     EDIT_FR_SQL = :edit_fr_sql,
                     UPD_TS = CURRENT_TIMESTAMP
-                WHERE ROWID = CHARTOROWID(:rowid)
+                WHERE ROWID = CHARTOROWID(:rid)
                 """,
                 [
                     {
                         "target_table": target_table,
                         "fr_sql_text": fr_sql_text,
                         "edit_fr_sql": edit_fr_sql,
-                        "rowid": rowid,
+                        "rid": rowid,
                     }
                     for target_table, fr_sql_text, edit_fr_sql, rowid in updates
                 ],
@@ -1019,17 +1019,20 @@ def strip_schema_qualifiers_from_next_sql_info() -> dict[str, int]:
             conn.commit()
 
     ready_updated = 0
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            f"""
-            UPDATE {result_table}
-            SET STATUS = 'READY',
-                UPD_TS = CURRENT_TIMESTAMP
-            """
-        )
-        ready_updated = max(int(cursor.rowcount or 0), 0)
-        conn.commit()
+    if updates:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany(
+                f"""
+                UPDATE {result_table}
+                SET STATUS = 'READY',
+                    UPD_TS = CURRENT_TIMESTAMP
+                WHERE ROWID = CHARTOROWID(:1)
+                """,
+                [(rowid,) for _target_table, _fr_sql_text, _edit_fr_sql, rowid in updates],
+            )
+            ready_updated = max(int(cursor.rowcount or 0), 0)
+            conn.commit()
 
     logger.info(
         "[XMLParser] Stage5 completed "
