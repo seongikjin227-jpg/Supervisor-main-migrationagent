@@ -33,6 +33,38 @@ _SQL_SCHEMA_STRIP_PROTECTED_PATTERN = re.compile(
     r"/\*.*?\*/|--[^\n]*|'(?:''|[^'])*'|[#$]\{\s*[^}]+\s*\}|<[^>]+>",
     flags=re.DOTALL,
 )
+_SQL_TABLE_NOISE_WORDS = {
+    "AS",
+    "BY",
+    "CASE",
+    "COALESCE",
+    "COUNT",
+    "DECODE",
+    "DUAL",
+    "ELSE",
+    "END",
+    "FROM",
+    "GROUP",
+    "HAVING",
+    "JOIN",
+    "MAX",
+    "MIN",
+    "NVL",
+    "ON",
+    "ORDER",
+    "SELECT",
+    "SET",
+    "SUBSTR",
+    "SUM",
+    "THEN",
+    "TO_CHAR",
+    "TO_DATE",
+    "TO_NUMBER",
+    "TRIM",
+    "USING",
+    "WHEN",
+    "WHERE",
+}
 
 
 @dataclass
@@ -760,23 +792,60 @@ def _extract_cte_names(sql_text: str) -> set[str]:
     return cte_names
 
 
+def _split_top_level_commas(text: str) -> list[str]:
+    """괄호/문자열 내부 comma를 보존하면서 최상위 comma만 분리한다."""
+    chunks: list[str] = []
+    start = 0
+    depth = 0
+    in_quote = False
+    idx = 0
+    while idx < len(text):
+        ch = text[idx]
+        if in_quote:
+            if ch == "'":
+                if idx + 1 < len(text) and text[idx + 1] == "'":
+                    idx += 2
+                    continue
+                in_quote = False
+            idx += 1
+            continue
+        if ch == "'":
+            in_quote = True
+            idx += 1
+            continue
+        if ch == "(":
+            depth += 1
+            idx += 1
+            continue
+        if ch == ")":
+            if depth > 0:
+                depth -= 1
+            idx += 1
+            continue
+        if ch == "," and depth == 0:
+            chunks.append(text[start:idx])
+            start = idx + 1
+        idx += 1
+    chunks.append(text[start:])
+    return chunks
+
+
+def _starts_from_clause_stop(text: str, idx: int) -> bool:
+    """FROM 절 종료 키워드가 현재 위치에서 시작하는지 확인한다."""
+    return bool(
+        re.match(
+            r"\s+(WHERE|GROUP|ORDER|HAVING|CONNECT|START|UNION|MINUS|INTERSECT)\b",
+            text[idx:],
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _extract_from_clause_tables(sql_text: str) -> list[str]:
     """FROM 절의 comma join 패턴을 포함해 테이블명을 추출한다."""
     tables: list[str] = []
     idx = 0
     upper = sql_text.upper()
-    stop_keywords = (
-        " WHERE ",
-        " GROUP ",
-        " ORDER ",
-        " HAVING ",
-        " CONNECT ",
-        " START ",
-        " UNION ",
-        " MINUS ",
-        " INTERSECT ",
-    )
-
     while True:
         match = re.search(r"\bFROM\b", upper[idx:])
         if not match:
@@ -804,17 +873,19 @@ def _extract_from_clause_tables(sql_text: str) -> list[str]:
                 end += 1
                 continue
             if depth == 0:
-                window = upper[end : min(end + 12, len(upper))]
-                if any(window.startswith(keyword) for keyword in stop_keywords):
+                if _starts_from_clause_stop(upper, end):
                     break
             end += 1
 
         clause = upper[pos:end]
-        for chunk in clause.split(","):
+        for chunk in _split_top_level_commas(clause):
             token = chunk.strip()
             if not token or token.startswith("("):
                 continue
             ident, _ = _read_sql_identifier(token, 0)
+            after_ident = token[len(ident) :].lstrip() if ident else ""
+            if after_ident.startswith("("):
+                continue
             normalized = _normalize_table_name(ident)
             if normalized:
                 tables.append(normalized)
@@ -828,7 +899,7 @@ def _extract_target_tables_from_sql(sql_text: str) -> list[str]:
     cleaned = _strip_sql_for_table_parse(sql_text)
     upper = cleaned.upper()
     cte_names = _extract_cte_names(cleaned)
-    ignored = {"DUAL"} | cte_names
+    ignored = _SQL_TABLE_NOISE_WORDS | cte_names
 
     candidates: list[str] = []
 
@@ -836,7 +907,11 @@ def _extract_target_tables_from_sql(sql_text: str) -> list[str]:
         normalized = _normalize_table_name(token)
         if not normalized:
             return
-        table_short = normalized.split(".")[-1]
+        table_short = normalized.split(".")[-1].strip('"')
+        if not table_short:
+            return
+        if table_short.isdigit() or normalized.replace(".", "").isdigit():
+            return
         if normalized in ignored or table_short in ignored:
             return
         if normalized not in candidates:
