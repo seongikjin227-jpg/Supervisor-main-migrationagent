@@ -167,13 +167,28 @@ def _short_table_name(table_name: str) -> str:
     return normalized.split(".")[-1].strip('"')
 
 
+def _is_valid_target_table_name(table_name: str) -> bool:
+    """TARGET_TABLE에 저장해도 되는 실제 테이블명 후보인지 검사한다."""
+    normalized = _normalize_table_name(table_name)
+    if not normalized:
+        return False
+    table_short = normalized.split(".")[-1].strip('"')
+    if not table_short:
+        return False
+    if table_short.isdigit() or normalized.replace(".", "").replace('"', "").isdigit():
+        return False
+    if normalized in _SQL_TABLE_NOISE_WORDS or table_short in _SQL_TABLE_NOISE_WORDS:
+        return False
+    return True
+
+
 def _strip_schema_from_target_tables(value: Any) -> list[str]:
     """TARGET_TABLE 값을 스키마 제거/중복 제거된 테이블명 목록으로 변환한다."""
     results: list[str] = []
     seen = set()
     for table_name in _parse_stored_target_table(value):
         short_name = _short_table_name(table_name)
-        if not short_name or short_name in seen:
+        if not short_name or not _is_valid_target_table_name(short_name) or short_name in seen:
             continue
         results.append(short_name)
         seen.add(short_name)
@@ -275,7 +290,7 @@ def _parse_target_tables_from_active_columns(*values: Any) -> list[str]:
 
         for token in tokens:
             normalized = _normalize_table_name(token)
-            if not normalized or normalized in seen:
+            if not normalized or not _is_valid_target_table_name(normalized) or normalized in seen:
                 continue
             results.append(normalized)
             seen.add(normalized)
@@ -656,7 +671,7 @@ def _parse_stored_target_table(value: Any) -> list[str]:
             result = []
             for item in parsed:
                 normalized = _normalize_table_name(_to_text(item))
-                if normalized:
+                if normalized and _is_valid_target_table_name(normalized):
                     result.append(normalized)
             return result
     except Exception:
@@ -665,7 +680,7 @@ def _parse_stored_target_table(value: Any) -> list[str]:
     items = []
     for token in re.split(r"[,\s]+", text):
         normalized = _normalize_table_name(token)
-        if normalized:
+        if normalized and _is_valid_target_table_name(normalized):
             items.append(normalized)
     return items
 
@@ -905,13 +920,9 @@ def _extract_target_tables_from_sql(sql_text: str) -> list[str]:
 
     def _add_candidate(token: str) -> None:
         normalized = _normalize_table_name(token)
-        if not normalized:
+        if not normalized or not _is_valid_target_table_name(normalized):
             return
         table_short = normalized.split(".")[-1].strip('"')
-        if not table_short:
-            return
-        if table_short.isdigit() or normalized.replace(".", "").isdigit():
-            return
         if normalized in ignored or table_short in ignored:
             return
         if normalized not in candidates:
