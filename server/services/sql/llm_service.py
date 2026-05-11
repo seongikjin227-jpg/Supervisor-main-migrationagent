@@ -15,6 +15,7 @@ from server.services.sql.domain_models import MappingRuleItem, SqlInfoJob
 from server.services.sql.binding_service import build_bind_target_hints
 from server.services.sql.mybatis_materializer_service import materialize_sql
 from server.services.sql.prompt_service import build_prompt_messages
+from server.services.sql.tobe_sql_tuning_service import tobe_sql_tuning_service
 
 
 # unified_agent/ 프로젝트 루트
@@ -446,6 +447,11 @@ def tune_tobe_sql(
         messages=_build_sql_messages(
             "tobe_sql_tuning_prompt.json",
             current_tobe_sql=current_tobe_sql,
+            universal_tuning_rules=json.dumps(
+                tobe_sql_tuning_service.load_universal_tuning_rules(),
+                ensure_ascii=False,
+                indent=2,
+            ),
             tuning_examples_json=serialize_tuning_examples_for_prompt(tuning_examples or []),
             last_error=last_error or "None",
         ),

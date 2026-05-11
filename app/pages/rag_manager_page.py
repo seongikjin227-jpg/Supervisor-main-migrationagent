@@ -40,6 +40,7 @@ def render():
         table_rows = [
             {
                 "RULE_ID": r["RULE_ID"],
+                "type": r.get("RULE_TYPE", "SEARCH"),
                 "guidance (preview)": (r.get("GUIDANCE") or "")[:80],
                 "CREATED_AT": r.get("CREATED_AT", ""),
                 "UPDATED_AT": r.get("UPDATED_AT", ""),
@@ -64,6 +65,7 @@ def render():
                 tab_view, tab_edit = st.tabs(["조회", "수정"])
 
                 with tab_view:
+                    st.write(f"**type:** `{sel.get('RULE_TYPE', 'SEARCH')}`")
                     st.write("**guidance:**")
                     for line in (sel.get("GUIDANCE") or "").splitlines():
                         if line.strip():
@@ -79,6 +81,11 @@ def render():
 
                 with tab_edit:
                     with st.form(f"edit_form_{sel_id}"):
+                        new_type = st.selectbox(
+                            "rule type",
+                            ["SEARCH", "GENERAL"],
+                            index=0 if sel.get("RULE_TYPE", "SEARCH") != "GENERAL" else 1,
+                        )
                         new_guidance = st.text_area(
                             "guidance", value=sel.get("GUIDANCE") or "", height=120
                         )
@@ -94,7 +101,7 @@ def render():
                         )
                         if st.form_submit_button("💾 수정 저장", type="primary"):
                             try:
-                                update_rule(sel_id, new_guidance, new_bad_sql, new_tuned_sql)
+                                update_rule(sel_id, new_guidance, new_bad_sql, new_tuned_sql, new_type)
                                 st.success(f"{sel_id} 수정 완료")
                                 st.rerun()
                             except Exception as e:
@@ -143,6 +150,8 @@ def render():
             st.write("")
             st.caption(f"자동 제안: `{auto_id}`  (직접 입력 가능)")
 
+        new_type = st.selectbox("rule type", ["SEARCH", "GENERAL"])
+
         new_guidance = st.text_area(
             "guidance (줄바꿈으로 여러 항목)",
             placeholder="불필요한 SELECT * 제거\n인라인뷰를 직접 조인으로 변환",
@@ -165,15 +174,15 @@ def render():
             st.error("RULE_ID를 입력하세요.")
         elif not new_guidance.strip():
             st.error("guidance를 입력하세요.")
-        elif not new_bad_sql.strip():
-            st.error("example_bad_sql을 입력하세요.")
+        elif new_type == "SEARCH" and not new_bad_sql.strip():
+            st.error("검색 룰은 example_bad_sql을 입력하세요.")
         else:
             try:
                 if rule_id_exists(new_id.strip()):
                     st.error(f"RULE_ID '{new_id.strip()}' 이 이미 존재합니다.")
                 else:
                     add_rule(new_id.strip(), new_guidance.strip(),
-                             new_bad_sql.strip(), new_tuned_sql.strip())
+                             new_bad_sql.strip(), new_tuned_sql.strip(), new_type)
                     st.success(f"룰 생성 완료: **{new_id.strip()}**")
                     st.rerun()
             except Exception as e:

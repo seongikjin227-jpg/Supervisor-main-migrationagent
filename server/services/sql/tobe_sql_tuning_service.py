@@ -17,6 +17,7 @@ _SERVICE_DIR = Path(__file__).resolve().parent
 # unified_agent/ 프로젝트 루트 (.env 위치 기준)
 _PROJECT_ROOT = _SERVICE_DIR.parent.parent.parent
 DEFAULT_CATALOG_PATH = _SERVICE_DIR / "data" / "rag" / "tobe_rule_catalog.json"
+DEFAULT_UNIVERSAL_RULES_PATH = _SERVICE_DIR / "data" / "rules" / "universal_tuning_rules.json"
 load_dotenv(_PROJECT_ROOT / ".env")
 
 
@@ -24,6 +25,8 @@ class TobeSqlTuningService:
     def __init__(self) -> None:
         raw_path = os.getenv("TOBE_RULE_CATALOG_PATH", str(DEFAULT_CATALOG_PATH))
         self.catalog_path = self._resolve_path(raw_path)
+        raw_universal_path = os.getenv("UNIVERSAL_TUNING_RULES_PATH", str(DEFAULT_UNIVERSAL_RULES_PATH))
+        self.universal_rules_path = self._resolve_path(raw_universal_path)
         self.top_k = max(1, int(os.getenv("TOBE_SQL_TUNING_TOP_K", "3")))
         self.embed_base_url = os.getenv("RAG_EMBED_BASE_URL", "").strip()
         self.embed_api_key = os.getenv("RAG_EMBED_API_KEY", "").strip()
@@ -47,6 +50,17 @@ class TobeSqlTuningService:
                 f"(reason={type(exc).__name__}: {exc})"
             )
             return [self._build_lexical_match_payload(block, rules) for block in ordered_blocks]
+
+    def load_universal_tuning_rules(self) -> list[dict[str, Any]]:
+        try:
+            rules = self._load_universal_from_db()
+            if rules:
+                return rules
+        except Exception as exc:
+            logger.warning(
+                f"[TobeSqlTuningService] DB GENERAL 룰 로드 실패, JSON fallback 사용 ({type(exc).__name__}: {exc})"
+            )
+        return self._load_universal_from_json()
 
     def _retrieve_by_vector_search(
         self,
@@ -204,13 +218,23 @@ class TobeSqlTuningService:
             return self._load_from_json()
 
     def _load_from_db(self) -> list[dict[str, Any]]:
-        import oracledb
         from server.services.sql.db_runtime import get_connection
 
-        q = "SELECT RULE_ID, GUIDANCE, EXAMPLE_BAD_SQL, EXAMPLE_TUNED_SQL FROM NEXT_SQL_RULES ORDER BY CREATED_AT ASC"
-        result: list[dict[str, Any]] = []
         with get_connection() as conn:
             cur = conn.cursor()
+            columns = self._get_table_columns(cur, "NEXT_SQL_RULES")
+            scope_filter = (
+                "WHERE UPPER(TRIM(NVL(RULE_TYPE, 'SEARCH'))) = 'SEARCH'"
+                if "RULE_TYPE" in columns
+                else ""
+            )
+            q = f"""
+                SELECT RULE_ID, GUIDANCE, EXAMPLE_BAD_SQL, EXAMPLE_TUNED_SQL
+                FROM NEXT_SQL_RULES
+                {scope_filter}
+                ORDER BY CREATED_AT ASC
+            """
+            result: list[dict[str, Any]] = []
             cur.execute(q)
             for row in cur.fetchall():
                 rule_id = str(row[0] or "").strip()
@@ -229,7 +253,40 @@ class TobeSqlTuningService:
                         "normalized_bad_sql": self._normalize_sql_shape(example_bad_sql),
                     }
                 )
-        logger.info(f"[TobeSqlTuningService] DB에서 룰 {len(result)}개 로드 완료")
+        logger.info(f"[TobeSqlTuningService] DB에서 검색 룰 {len(result)}개 로드 완료")
+        return result
+
+    def _load_universal_from_db(self) -> list[dict[str, Any]]:
+        from server.services.sql.db_runtime import get_connection
+
+        result: list[dict[str, Any]] = []
+        with get_connection() as conn:
+            cur = conn.cursor()
+            columns = self._get_table_columns(cur, "NEXT_SQL_RULES")
+            if "RULE_TYPE" not in columns:
+                return []
+            q = """
+                SELECT RULE_ID, GUIDANCE
+                FROM NEXT_SQL_RULES
+                WHERE UPPER(TRIM(RULE_TYPE)) = 'GENERAL'
+                ORDER BY CREATED_AT ASC
+            """
+            cur.execute(q)
+            for row in cur.fetchall():
+                rule_id = str(row[0] or "").strip()
+                guidance_raw = str(row[1] or "").strip()
+                if not rule_id or not guidance_raw:
+                    continue
+                guidance = [g.strip() for g in guidance_raw.splitlines() if g.strip()]
+                result.append(
+                    {
+                        "rule_id": rule_id,
+                        "category": "general",
+                        "priority": "mandatory",
+                        "guidance": guidance,
+                    }
+                )
+        logger.info(f"[TobeSqlTuningService] DB에서 GENERAL 룰 {len(result)}개 로드 완료")
         return result
 
     def _load_from_json(self) -> list[dict[str, Any]]:
@@ -259,6 +316,41 @@ class TobeSqlTuningService:
                 }
             )
         return result
+
+    def _load_universal_from_json(self) -> list[dict[str, Any]]:
+        if not self.universal_rules_path.exists():
+            logger.warning(f"[TobeSqlTuningService] universal rule file not found: {self.universal_rules_path}")
+            return []
+
+        raw = json.loads(self.universal_rules_path.read_text(encoding="utf-8"))
+        rows = raw.get("rules", raw if isinstance(raw, list) else [])
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            rule_id = str(row.get("rule_id", "")).strip()
+            guidance_raw = row.get("guidance", [])
+            guidance = [str(item) for item in guidance_raw] if isinstance(guidance_raw, list) else [str(guidance_raw)]
+            guidance = [item.strip() for item in guidance if item.strip()]
+            if not rule_id or not guidance:
+                continue
+            result.append(
+                {
+                    "rule_id": rule_id,
+                    "category": str(row.get("category", "universal")),
+                    "priority": str(row.get("priority", "mandatory")),
+                    "guidance": guidance,
+                }
+            )
+        return result
+
+    @staticmethod
+    def _get_table_columns(cur, table_name: str) -> set[str]:
+        cur.execute(
+            "SELECT COLUMN_NAME FROM USER_TAB_COLUMNS WHERE TABLE_NAME = :1",
+            (table_name.upper(),),
+        )
+        return {str(row[0]).upper() for row in cur.fetchall()}
 
     def _split_sql_into_blocks(self, sql_text: str) -> list[dict[str, str]]:
         source = (sql_text or "").strip().rstrip(";").strip()

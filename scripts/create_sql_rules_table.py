@@ -16,17 +16,22 @@ from server.services.sql.db_runtime import get_connection
 DDL = """
 CREATE TABLE NEXT_SQL_RULES (
     RULE_ID           VARCHAR2(100)  NOT NULL,
+    RULE_TYPE         VARCHAR2(20)   DEFAULT 'SEARCH' NOT NULL,
     GUIDANCE          VARCHAR2(4000) NOT NULL,
     EXAMPLE_BAD_SQL   CLOB,
     EXAMPLE_TUNED_SQL CLOB,
     CREATED_AT        TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
     UPDATED_AT        TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+    CONSTRAINT CK_NEXT_SQL_RULES_TYPE CHECK (RULE_TYPE IN ('GENERAL', 'SEARCH')),
     CONSTRAINT PK_NEXT_SQL_RULES PRIMARY KEY (RULE_ID)
 )
 """
 
 RAG_PATH = (
     ROOT_DIR / "server" / "services" / "sql" / "data" / "rag" / "tobe_rule_catalog.json"
+)
+UNIVERSAL_PATH = (
+    ROOT_DIR / "server" / "services" / "sql" / "data" / "rules" / "universal_tuning_rules.json"
 )
 
 
@@ -38,8 +43,28 @@ def table_exists(cur, table_name: str) -> bool:
     return cur.fetchone()[0] > 0
 
 
+def column_exists(cur, table_name: str, column_name: str) -> bool:
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM USER_TAB_COLUMNS
+        WHERE TABLE_NAME = :1 AND COLUMN_NAME = :2
+        """,
+        (table_name.upper(), column_name.upper()),
+    )
+    return cur.fetchone()[0] > 0
+
+
+def load_rules(path: Path, rule_type: str) -> list[dict]:
+    if not path.exists():
+        return []
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    rows = raw.get("rules", raw if isinstance(raw, list) else [])
+    return [{**row, "rule_type": rule_type} for row in rows if isinstance(row, dict)]
+
+
 def main():
-    rules = json.loads(RAG_PATH.read_text(encoding="utf-8")).get("rules", [])
+    rules = load_rules(RAG_PATH, "SEARCH") + load_rules(UNIVERSAL_PATH, "GENERAL")
 
     with get_connection() as conn:
         cur = conn.cursor()
@@ -47,6 +72,9 @@ def main():
         # ── 테이블 생성 ───────────────────────────────────────────────────────
         if table_exists(cur, "NEXT_SQL_RULES"):
             print("⚠️  NEXT_SQL_RULES 테이블이 이미 존재합니다. 데이터만 업서트합니다.")
+            if not column_exists(cur, "NEXT_SQL_RULES", "RULE_TYPE"):
+                cur.execute("ALTER TABLE NEXT_SQL_RULES ADD (RULE_TYPE VARCHAR2(20) DEFAULT 'SEARCH' NOT NULL)")
+                print("✅ RULE_TYPE 컬럼 추가 완료")
         else:
             cur.execute(DDL)
             print("✅ NEXT_SQL_RULES 테이블 생성 완료")
@@ -56,6 +84,7 @@ def main():
         skipped = 0
         for r in rules:
             rule_id = r.get("rule_id", "")
+            rule_type = (r.get("rule_type") or "SEARCH").upper()
             guidance_lines = r.get("guidance", [])
             guidance = "\n".join(guidance_lines) if isinstance(guidance_lines, list) else str(guidance_lines)
             bad_sql = r.get("example_bad_sql", "") or ""
@@ -71,22 +100,22 @@ def main():
             if exists:
                 cur.execute(
                     """UPDATE NEXT_SQL_RULES
-                       SET GUIDANCE = :1, EXAMPLE_BAD_SQL = :2,
-                           EXAMPLE_TUNED_SQL = :3, UPDATED_AT = SYSTIMESTAMP
-                       WHERE RULE_ID = :4""",
-                    (guidance, bad_sql, tuned_sql, rule_id),
+                       SET RULE_TYPE = :1, GUIDANCE = :2, EXAMPLE_BAD_SQL = :3,
+                           EXAMPLE_TUNED_SQL = :4, UPDATED_AT = SYSTIMESTAMP
+                       WHERE RULE_ID = :5""",
+                    (rule_type, guidance, bad_sql, tuned_sql, rule_id),
                 )
                 skipped += 1
-                print(f"  ↻ UPDATED  {rule_id}")
+                print(f"  ↻ UPDATED  {rule_id} ({rule_type})")
             else:
                 cur.execute(
                     """INSERT INTO NEXT_SQL_RULES
-                           (RULE_ID, GUIDANCE, EXAMPLE_BAD_SQL, EXAMPLE_TUNED_SQL)
-                       VALUES (:1, :2, :3, :4)""",
-                    (rule_id, guidance, bad_sql, tuned_sql),
+                           (RULE_ID, RULE_TYPE, GUIDANCE, EXAMPLE_BAD_SQL, EXAMPLE_TUNED_SQL)
+                       VALUES (:1, :2, :3, :4, :5)""",
+                    (rule_id, rule_type, guidance, bad_sql, tuned_sql),
                 )
                 inserted += 1
-                print(f"  ✓ INSERTED {rule_id}")
+                print(f"  ✓ INSERTED {rule_id} ({rule_type})")
 
         conn.commit()
         print(f"\n완료 — 삽입: {inserted}건, 업데이트: {skipped}건 (총 {len(rules)}건)")

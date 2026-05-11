@@ -175,6 +175,8 @@ TUNED_SQL 저장, TUNED_TEST = PASS / FAIL
 
 ### 핵심 동작
 
+- **범용 룰**: `NEXT_SQL_RULES.RULE_TYPE='GENERAL'` 룰을 프롬프트에 항상 직접 삽입
+- **검색 룰**: `NEXT_SQL_RULES.RULE_TYPE='SEARCH'` 룰만 FAISS/토큰 검색 대상으로 사용하고 Top-K만 프롬프트에 삽입
 - **RAG 엔진**: FAISS CPU 인덱스 + `BAAI/bge-m3` 임베딩 모델
 - **멀티 이터레이션**: `TOBE_SQL_TUNING_MAX_ITERATIONS >= 2`이면 직전 튜닝 결과를 다음 반복 입력으로 사용
 - **재시도 기준**: `BATCH_CNT < 30`인 `FAIL` 작업은 다음 사이클에서 재시도
@@ -321,7 +323,7 @@ print(materialize_sql(sql, {"userId": 100}))
 |------|------|----------|
 | `binding_service.py` | MyBatis bind 파라미터 추출, bind case 최대 3개 구성, JSON 직렬화 | 없음 |
 | `validation_service.py` | LLM이 만든 bind/test SQL 실행, row count 검증 결과 판정 | 없음 |
-| `tobe_sql_tuning_service.py` | `NEXT_SQL_RULES` 또는 `tobe_rule_catalog.json`에서 튜닝 룰 로드, FAISS/임베딩 검색, 실패 시 토큰 검색 fallback | 없음 |
+| `tobe_sql_tuning_service.py` | `NEXT_SQL_RULES` 또는 JSON fallback에서 범용/검색 튜닝 룰 로드, FAISS/임베딩 검색, 실패 시 토큰 검색 fallback | 없음 |
 | `prompt_service.py` | `server/config/prompts/*.json` 프롬프트 템플릿 로드 | 없음 |
 | `llm_service.py` | TO-BE SQL, bind SQL, test SQL, 튜닝 SQL 생성을 위한 LLM 호출 래퍼 | 없음 |
 | `batch_scheduler.py` | `NEXT_SQL_INFO`를 1분마다 폴링하는 SQL 변환/튜닝 단독 스케줄러 | 가능 |
@@ -336,7 +338,7 @@ python -m server.services.sql.batch_scheduler
 
 ### 튜닝 룰 테이블과 보조 스크립트
 
-RAG 튜닝 룰은 우선 `NEXT_SQL_RULES` 테이블에서 읽고, 실패하면 `server/services/sql/data/rag/tobe_rule_catalog.json`으로 fallback합니다. JSON 룰을 DB 테이블로 적재하려면 다음 스크립트를 실행합니다.
+튜닝 룰은 우선 `NEXT_SQL_RULES` 테이블에서 읽습니다. `RULE_TYPE='GENERAL'`은 모든 튜닝 프롬프트에 직접 들어가는 범용 룰이고, `RULE_TYPE='SEARCH'`는 RAG/FAISS 검색 대상 룰입니다. DB 로드에 실패하면 검색 룰은 `server/services/sql/data/rag/tobe_rule_catalog.json`, 범용 룰은 `server/services/sql/data/rules/universal_tuning_rules.json`으로 fallback합니다. JSON 룰을 DB 테이블로 적재하려면 다음 스크립트를 실행합니다.
 
 ```bash
 python scripts/create_sql_rules_table.py
@@ -451,6 +453,7 @@ RAG_EMBED_API_KEY=
 RAG_EMBED_MODEL=BAAI/bge-m3
 RAG_EMBED_TIMEOUT_SEC=30
 TOBE_RULE_CATALOG_PATH=server/services/sql/data/rag/tobe_rule_catalog.json
+UNIVERSAL_TUNING_RULES_PATH=server/services/sql/data/rules/universal_tuning_rules.json
 TOBE_SQL_TUNING_TOP_K=3
 TOBE_SQL_TUNING_MAX_ITERATIONS=1
 

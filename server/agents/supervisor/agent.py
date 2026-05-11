@@ -73,15 +73,23 @@ class SupervisorAgent:
             "stop_requested": False,
         }
 
+        stopped_normally = False
         try:
             self._graph.invoke(
                 initial_state,
                 config={"recursion_limit": SUPERVISOR_RECURSION_LIMIT},
             )
+            stopped_normally = True
         except (KeyboardInterrupt, SystemExit):
-            pass
+            stopped_normally = True
+        except Exception:
+            logger.exception("[Supervisor] 예기치 못한 오류로 Supervisor 그래프가 중단되었습니다.")
+            raise
         finally:
-            logger.info("[Supervisor] 모든 에이전트가 종료되었습니다.")
+            if stopped_normally:
+                logger.info("[Supervisor] 모든 에이전트가 종료되었습니다.")
+            else:
+                logger.error("[Supervisor] 비정상 종료되었습니다. 위의 예외 로그를 확인하십시오.")
 
     @staticmethod
     def _register_signal_handlers() -> None:

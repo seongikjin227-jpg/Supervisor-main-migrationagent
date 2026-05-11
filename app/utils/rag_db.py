@@ -2,43 +2,73 @@
 from utils.db import get_connection, _s
 
 
+def _has_rule_type_column(cur) -> bool:
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM USER_TAB_COLUMNS
+        WHERE TABLE_NAME = 'NEXT_SQL_RULES' AND COLUMN_NAME = 'RULE_TYPE'
+        """
+    )
+    return cur.fetchone()[0] > 0
+
+
 def get_all_rules() -> list[dict]:
-    q = """
-        SELECT RULE_ID, GUIDANCE, EXAMPLE_BAD_SQL, EXAMPLE_TUNED_SQL,
-               TO_CHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI:SS') AS CREATED_AT,
-               TO_CHAR(UPDATED_AT, 'YYYY-MM-DD HH24:MI:SS') AS UPDATED_AT
-        FROM NEXT_SQL_RULES
-        ORDER BY CREATED_AT ASC
-    """
     with get_connection() as conn:
         cur = conn.cursor()
+        type_expr = "NVL(RULE_TYPE, 'SEARCH')" if _has_rule_type_column(cur) else "'SEARCH'"
+        q = f"""
+            SELECT RULE_ID, {type_expr} AS RULE_TYPE,
+                   GUIDANCE, EXAMPLE_BAD_SQL, EXAMPLE_TUNED_SQL,
+                   TO_CHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI:SS') AS CREATED_AT,
+                   TO_CHAR(UPDATED_AT, 'YYYY-MM-DD HH24:MI:SS') AS UPDATED_AT
+            FROM NEXT_SQL_RULES
+            ORDER BY CREATED_AT ASC
+        """
         cur.execute(q)
         cols = [d[0] for d in cur.description]
         return [{cols[i]: _s(row[i]) for i in range(len(cols))} for row in cur.fetchall()]
 
 
-def add_rule(rule_id: str, guidance: str, bad_sql: str, tuned_sql: str = "") -> None:
-    q = """
-        INSERT INTO NEXT_SQL_RULES
-            (RULE_ID, GUIDANCE, EXAMPLE_BAD_SQL, EXAMPLE_TUNED_SQL)
-        VALUES (:1, :2, :3, :4)
-    """
+def add_rule(rule_id: str, guidance: str, bad_sql: str, tuned_sql: str = "", rule_type: str = "SEARCH") -> None:
     with get_connection() as conn:
         cur = conn.cursor()
-        cur.execute(q, (rule_id, guidance, bad_sql, tuned_sql))
+        if _has_rule_type_column(cur):
+            q = """
+                INSERT INTO NEXT_SQL_RULES
+                    (RULE_ID, RULE_TYPE, GUIDANCE, EXAMPLE_BAD_SQL, EXAMPLE_TUNED_SQL)
+                VALUES (:1, :2, :3, :4, :5)
+            """
+            cur.execute(q, (rule_id, rule_type, guidance, bad_sql, tuned_sql))
+        else:
+            q = """
+                INSERT INTO NEXT_SQL_RULES
+                    (RULE_ID, GUIDANCE, EXAMPLE_BAD_SQL, EXAMPLE_TUNED_SQL)
+                VALUES (:1, :2, :3, :4)
+            """
+            cur.execute(q, (rule_id, guidance, bad_sql, tuned_sql))
         conn.commit()
 
 
-def update_rule(rule_id: str, guidance: str, bad_sql: str, tuned_sql: str = "") -> None:
-    q = """
-        UPDATE NEXT_SQL_RULES
-        SET GUIDANCE = :1, EXAMPLE_BAD_SQL = :2,
-            EXAMPLE_TUNED_SQL = :3, UPDATED_AT = SYSTIMESTAMP
-        WHERE RULE_ID = :4
-    """
+def update_rule(rule_id: str, guidance: str, bad_sql: str, tuned_sql: str = "", rule_type: str = "SEARCH") -> None:
     with get_connection() as conn:
         cur = conn.cursor()
-        cur.execute(q, (guidance, bad_sql, tuned_sql, rule_id))
+        if _has_rule_type_column(cur):
+            q = """
+                UPDATE NEXT_SQL_RULES
+                SET RULE_TYPE = :1, GUIDANCE = :2, EXAMPLE_BAD_SQL = :3,
+                    EXAMPLE_TUNED_SQL = :4, UPDATED_AT = SYSTIMESTAMP
+                WHERE RULE_ID = :5
+            """
+            cur.execute(q, (rule_type, guidance, bad_sql, tuned_sql, rule_id))
+        else:
+            q = """
+                UPDATE NEXT_SQL_RULES
+                SET GUIDANCE = :1, EXAMPLE_BAD_SQL = :2,
+                    EXAMPLE_TUNED_SQL = :3, UPDATED_AT = SYSTIMESTAMP
+                WHERE RULE_ID = :4
+            """
+            cur.execute(q, (guidance, bad_sql, tuned_sql, rule_id))
         conn.commit()
 
 

@@ -106,10 +106,10 @@ def build_supervisor_graph(
             "stop_requested": False,
         }
 
-    def execute_node(_state: SupervisorState) -> dict:
+    def execute_node(state: SupervisorState) -> dict:
         """Run up to 20 jobs for each agent from the current poll result."""
         if not mig_registry and not sql_registry and not tuning_registry:
-            return {}
+            return {"stop_requested": _stop_event.is_set() or state.get("stop_requested", False)}
 
         logger.info("[Supervisor] 작업 실행 시작")
 
@@ -130,7 +130,7 @@ def build_supervisor_graph(
         if tuning_row_ids:
             supervisor_tools.run_sql_tuning.invoke({"row_ids": tuning_row_ids})
 
-        return {}
+        return {"stop_requested": _stop_event.is_set() or state.get("stop_requested", False)}
 
     def wait_node(_state: SupervisorState) -> dict:
         """Flush metrics, respect pause flag, and wait before next poll."""
