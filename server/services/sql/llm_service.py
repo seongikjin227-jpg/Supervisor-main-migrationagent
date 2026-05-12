@@ -22,6 +22,9 @@ from server.services.sql.tobe_sql_tuning_service import tobe_sql_tuning_service
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 load_dotenv(_PROJECT_ROOT / ".env")
 _BIND_TOKEN_PATTERN = re.compile(r"[#$]\{\s*([^}]+?)\s*\}")
+_SQL_START_KEYWORDS = r"SELECT|INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|WITH"
+_MYBATIS_WRAPPER_TAGS = r"script|select|insert|update|delete"
+_MYBATIS_DYNAMIC_TAGS = r"if|choose|when|otherwise|where|trim|foreach"
 
 
 def _env_or_value(value: str | None, env_name: str) -> str:
@@ -227,13 +230,52 @@ def _extract_sql_text(response_text: str) -> str:
     if not text:
         raise ValueError("LLM returned an empty response.")
 
-    first_sql_keyword = re.search(r"\b(SELECT|INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|WITH)\b", text, re.IGNORECASE)
-    if first_sql_keyword and first_sql_keyword.start() > 0:
-        text = text[first_sql_keyword.start():].strip()
+    text = _strip_leading_non_sql_text(text)
+    text = _strip_mybatis_wrapper_tags(text)
 
-    if not re.match(r"^(SELECT|INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|WITH)\b", text, re.IGNORECASE):
+    if not _starts_with_sql_or_dynamic_tag(text):
         raise ValueError("LLM response does not start with executable SQL.")
     return _normalize_oracle_sql(text)
+
+
+def _strip_leading_non_sql_text(text: str) -> str:
+    start_patterns = [
+        rf"\b(?:{_SQL_START_KEYWORDS})\b",
+        rf"<\s*(?:{_MYBATIS_WRAPPER_TAGS})\b",
+        rf"<\s*(?:{_MYBATIS_DYNAMIC_TAGS})\b",
+    ]
+    matches = [match for pattern in start_patterns if (match := re.search(pattern, text, re.IGNORECASE))]
+    if not matches:
+        return text.strip()
+    first = min(matches, key=lambda match: match.start())
+    return text[first.start() :].strip()
+
+
+def _strip_mybatis_wrapper_tags(text: str) -> str:
+    stripped = text.strip()
+    while True:
+        open_match = re.match(
+            rf"^<\s*({_MYBATIS_WRAPPER_TAGS})\b[^>]*>",
+            stripped,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if not open_match:
+            return stripped
+        tag_name = open_match.group(1)
+        stripped = stripped[open_match.end() :].strip()
+        stripped = re.sub(
+            rf"</\s*{re.escape(tag_name)}\s*>\s*$",
+            "",
+            stripped,
+            flags=re.IGNORECASE,
+        ).strip()
+
+
+def _starts_with_sql_or_dynamic_tag(text: str) -> bool:
+    return bool(
+        re.match(rf"^(?:{_SQL_START_KEYWORDS})\b", text, re.IGNORECASE)
+        or re.match(rf"^<\s*(?:{_MYBATIS_DYNAMIC_TAGS})\b", text, re.IGNORECASE)
+    )
 
 
 def _normalize_bind_name(token: str) -> str:
@@ -265,7 +307,8 @@ def _sql_literal(value) -> str:
 
 
 def _render_sql_with_bind_values(sql_text: str, bind_case: dict[str, object]) -> str:
-    return materialize_sql(sql_text or "", bind_case)
+    render_context = {"__choose_strategy": "first_when", **(bind_case or {})}
+    return materialize_sql(sql_text or "", render_context)
 
 
 def _build_deterministic_test_sql(from_sql: str, tobe_sql: str, bind_sets: list[dict[str, object]]) -> str:

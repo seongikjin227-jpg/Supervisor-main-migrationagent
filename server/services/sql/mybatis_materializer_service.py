@@ -14,6 +14,8 @@ _AND_OR_PATTERN = re.compile(r"\b(and|or)\b", re.IGNORECASE)
 _NOT_PATTERN = re.compile(r"(?<![=!<>])!(?!=)")
 _IDENTIFIER_PATTERN = re.compile(r"\b([A-Za-z_][A-Za-z0-9_\.]*)\b")
 _KEYWORDS = {"and", "or", "not", "None", "True", "False", "in", "is"}
+_CHOOSE_STRATEGY_KEY = "__choose_strategy"
+_CHOOSE_FIRST_WHEN = "first_when"
 
 
 @dataclass
@@ -82,6 +84,10 @@ def _render_node(node: _Node, context: dict[str, Any]) -> str:
     if node.tag == "otherwise":
         return body
     if node.tag == "choose":
+        if context.get(_CHOOSE_STRATEGY_KEY) == _CHOOSE_FIRST_WHEN:
+            for child in node.items:
+                if isinstance(child, _Node) and child.tag == "when":
+                    return _render_items(child.items, context)
         for child in node.items:
             if not isinstance(child, _Node):
                 continue
@@ -164,7 +170,9 @@ def _evaluate_test(expression: str, context: dict[str, Any]) -> bool:
     if not expr:
         return False
 
+    expr, literals = _protect_string_literals(expr)
     expr = _AND_OR_PATTERN.sub(lambda m: m.group(1).lower(), expr)
+    expr = _normalize_ognl_operators(expr)
     expr = re.sub(r"\bnull\b", "None", expr, flags=re.IGNORECASE)
     expr = re.sub(r"\btrue\b", "True", expr, flags=re.IGNORECASE)
     expr = re.sub(r"\bfalse\b", "False", expr, flags=re.IGNORECASE)
@@ -181,10 +189,45 @@ def _evaluate_test(expression: str, context: dict[str, Any]) -> bool:
         return f"_resolve_name('{token}', _ctx)"
 
     expr = _IDENTIFIER_PATTERN.sub(repl_identifier, expr)
+    expr = _restore_string_literals(expr, literals)
     try:
         return bool(eval(expr, {"__builtins__": {}}, {"_ctx": context, "_resolve_name": _resolve_name}))
     except Exception:
         return False
+
+
+def _normalize_ognl_operators(expression: str) -> str:
+    replacements = {
+        "eq": "==",
+        "ne": "!=",
+        "gt": ">",
+        "ge": ">=",
+        "lt": "<",
+        "le": "<=",
+    }
+    return re.sub(
+        r"\b(eq|ne|gt|ge|lt|le)\b",
+        lambda match: replacements[match.group(1).lower()],
+        expression,
+        flags=re.IGNORECASE,
+    )
+
+
+def _protect_string_literals(expression: str) -> tuple[str, list[str]]:
+    literals: list[str] = []
+
+    def repl(match: re.Match[str]) -> str:
+        literals.append(match.group(0))
+        return f"@@{len(literals) - 1}@@"
+
+    return re.sub(r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"", repl, expression), literals
+
+
+def _restore_string_literals(expression: str, literals: list[str]) -> str:
+    restored = expression
+    for idx, literal in enumerate(literals):
+        restored = restored.replace(f"@@{idx}@@", literal)
+    return restored
 
 
 def _resolve_name(name: str, context: dict[str, Any]) -> Any:

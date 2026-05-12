@@ -9,9 +9,19 @@ from typing import Any
 
 _BIND_TOKEN_PATTERN = re.compile(r"[#$]\{\s*([^}]+?)\s*\}")
 _IF_TEST_PATTERN = re.compile(r"<if\b[^>]*\btest\s*=\s*['\"](.*?)['\"][^>]*>", re.IGNORECASE | re.DOTALL)
+_TEST_TAG_PATTERN = re.compile(r"<(if|when)\b[^>]*\btest\s*=\s*(['\"])(.*?)\2[^>]*>", re.IGNORECASE | re.DOTALL)
+_OTHERWISE_TAG_PATTERN = re.compile(r"<otherwise\b[^>]*>(.*?)</\s*otherwise\s*>", re.IGNORECASE | re.DOTALL)
 _IDENTIFIER_PATTERN = re.compile(r"\b([A-Za-z_][A-Za-z0-9_\.]*)\b")
 _DIRECT_BIND_COMPARISON_PATTERN = re.compile(
     r"([A-Za-z_][A-Za-z0-9_\.]*)\s*(?:=|<>|!=|>=|<=|>|<|LIKE|IN)\s*[#$]\{\s*([^}]+?)\s*\}",
+    re.IGNORECASE,
+)
+_TEST_LITERAL_COMPARE_PATTERN = re.compile(
+    r"\b([A-Za-z_][A-Za-z0-9_\.]*)\s*(==|=|eq|!=|<>|ne)\s*('([^']*)'|\"([^\"]*)\"|true|false|null)",
+    re.IGNORECASE,
+)
+_TEST_NULL_COMPARE_PATTERN = re.compile(
+    r"\b([A-Za-z_][A-Za-z0-9_\.]*)\s*(==|=|eq|!=|<>|ne)\s*null\b",
     re.IGNORECASE,
 )
 
@@ -67,17 +77,19 @@ def build_bind_param_metadata(sql_text: str) -> dict[str, Any]:
     conditional_groups: list[dict[str, Any]] = []
     conditional_seen: set[str] = set()
 
-    for match in _IF_TEST_PATTERN.finditer(source):
-        test_expr = (match.group(1) or "").strip()
-        body_start = match.end()
-        close_match = re.search(r"</\s*if\s*>", source[body_start:], flags=re.IGNORECASE)
-        if not close_match:
-            continue
-        body = source[body_start : body_start + close_match.start()]
+    for tag, test_expr, body in _iter_conditional_blocks(source):
+        test_expr = (test_expr or "").strip()
         params = extract_bind_param_names(body)
         if not params:
             continue
-        conditional_groups.append({"test": test_expr, "params": params})
+        conditional_groups.append({"tag": tag, "test": test_expr, "params": params})
+        conditional_seen.update(params)
+
+    for body in _iter_otherwise_bodies(source):
+        params = extract_bind_param_names(body)
+        if not params:
+            continue
+        conditional_groups.append({"tag": "otherwise", "test": "", "params": params})
         conditional_seen.update(params)
 
     return {
@@ -85,6 +97,36 @@ def build_bind_param_metadata(sql_text: str) -> dict[str, Any]:
         "conditional_bind_params": conditional_groups,
         "all_bind_params": all_params,
     }
+
+
+def _iter_conditional_blocks(sql_text: str) -> list[tuple[str, str, str]]:
+    blocks: list[tuple[str, str, str]] = []
+    source = sql_text or ""
+    for match in _TEST_TAG_PATTERN.finditer(source):
+        tag = match.group(1).lower()
+        test_expr = match.group(3) or ""
+        body_start = match.end()
+        close_match = re.search(rf"</\s*{tag}\s*>", source[body_start:], flags=re.IGNORECASE)
+        if not close_match:
+            continue
+        body = source[body_start : body_start + close_match.start()]
+        blocks.append((tag, test_expr, body))
+    return blocks
+
+
+def _iter_otherwise_bodies(sql_text: str) -> list[str]:
+    return [match.group(1) or "" for match in _OTHERWISE_TAG_PATTERN.finditer(sql_text or "")]
+
+
+def _merge_unique(*groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group:
+            if item and item not in seen:
+                merged.append(item)
+                seen.add(item)
+    return merged
 
 
 def _extract_if_param_groups(sql_text: str) -> list[list[str]]:
@@ -114,6 +156,42 @@ def _extract_if_param_groups(sql_text: str) -> list[list[str]]:
     return groups
 
 
+def _extract_test_param_names(sql_text: str) -> list[str]:
+    """<if>/<when> test expression에서 조건 제어 파라미터를 추출한다."""
+    condition = re.sub(r"'[^']*'|\"[^\"]*\"", " ", sql_text or "")
+    names: list[str] = []
+    seen: set[str] = set()
+    for ident in _IDENTIFIER_PATTERN.findall(condition):
+        lowered = ident.lower()
+        if lowered in _RESERVED_WORDS:
+            continue
+        if ident.isdigit():
+            continue
+        normalized = _normalize_param_name(ident)
+        if normalized and normalized not in seen:
+            names.append(normalized)
+            seen.add(normalized)
+    return names
+
+
+def _extract_all_test_param_names(sql_text: str) -> list[str]:
+    names: list[str] = []
+    for _tag, condition, _body in _iter_conditional_blocks(sql_text):
+        names = _merge_unique(names, _extract_test_param_names(condition))
+    return names
+
+
+def _extract_if_param_groups(sql_text: str) -> list[list[str]]:
+    if not sql_text:
+        return []
+    groups: list[list[str]] = []
+    for _tag, condition, _body in _iter_conditional_blocks(sql_text):
+        group = _extract_test_param_names(condition)
+        if group:
+            groups.append(group)
+    return groups
+
+
 def _first_matching_value(row: dict[str, Any], param_name: str):
     """컬럼 대소문자 차이를 흡수해 bind 이름에 대응하는 값을 찾는다."""
     for key in (param_name, param_name.lower(), param_name.upper()):
@@ -128,6 +206,71 @@ def _first_matching_value(row: dict[str, Any], param_name: str):
 def _build_bind_case(param_names: list[str], row: dict[str, Any]) -> dict[str, Any]:
     """조회 1행을 bind 케이스 1건으로 변환한다."""
     return {param: _first_matching_value(row, param) for param in param_names}
+
+
+def _build_branch_seed_cases(sql_text: str) -> list[dict[str, Any]]:
+    seeds: list[dict[str, Any]] = []
+    seen: set[tuple] = set()
+    for _tag, test_expr, _body in _iter_conditional_blocks(sql_text):
+        seed = _seed_case_from_test_expr(test_expr)
+        if not seed:
+            continue
+        signature = tuple(sorted(seed.items()))
+        if signature in seen:
+            continue
+        seeds.append(seed)
+        seen.add(signature)
+    return seeds
+
+
+def _seed_case_from_test_expr(test_expr: str) -> dict[str, Any]:
+    seed: dict[str, Any] = {}
+    for match in _TEST_LITERAL_COMPARE_PATTERN.finditer(test_expr or ""):
+        param = _normalize_param_name(match.group(1))
+        operator = match.group(2).lower()
+        literal = _parse_test_literal(match.group(3))
+        if not param:
+            continue
+        if operator in {"==", "=", "eq"}:
+            seed[param] = literal
+        elif operator in {"!=", "<>", "ne"} and param not in seed:
+            seed[param] = _non_matching_literal(literal)
+
+    for match in _TEST_NULL_COMPARE_PATTERN.finditer(test_expr or ""):
+        param = _normalize_param_name(match.group(1))
+        operator = match.group(2).lower()
+        if not param:
+            continue
+        if operator in {"==", "=", "eq"}:
+            seed[param] = None
+        elif operator in {"!=", "<>", "ne"}:
+            seed[param] = seed.get(param) or "Y"
+    return seed
+
+
+def _parse_test_literal(raw_value: str) -> Any:
+    value = (raw_value or "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    lowered = value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered == "null":
+        return None
+    return value
+
+
+def _non_matching_literal(value: Any) -> Any:
+    if value is None:
+        return "Y"
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, (int, float, Decimal)):
+        return value + 1
+    text = str(value)
+    return f"{text}__other" if text else "Y"
 
 
 def _signature_for_case(bind_case: dict[str, Any], if_groups: list[list[str]]) -> tuple:
