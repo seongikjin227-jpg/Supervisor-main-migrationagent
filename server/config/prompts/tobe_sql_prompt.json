@@ -9,10 +9,12 @@
   },
   "rules": [
     "Use TO_TABLE and TO_COL mappings as the primary source of truth.",
-    "Preserve query structure, filter intent, aggregation intent, join intent, and bind parameter names when possible.",
+    "Preserve query structure, filter intent, aggregation intent, join intent, MyBatis dynamic tags, and bind parameter names when possible.",
     "Keep MyBatis placeholders exactly as valid MyBatis placeholders.",
-    "Do not output commentary, markdown, JSON, multiple statements, PL/SQL, or semicolons.",
-    "Return exactly one executable Oracle/MyBatis SQL statement."
+    "Keep existing MyBatis dynamic tags such as <if>, <choose>, <when>, <otherwise>, <where>, <trim>, and <foreach>; update only table names, column names, aliases, and SQL expressions needed by the mapping rules.",
+    "Do not split dynamic branches into separate SQL statements. Keep them inside the existing MyBatis dynamic tag structure.",
+    "Do not output commentary, markdown, JSON, multiple statements, PL/SQL, or statement-terminating semicolons.",
+    "Return exactly one Oracle/MyBatis SQL template."
   ],
-  "user_instruction": "Generate one executable Oracle SQL statement only."
+  "user_instruction": "Generate one Oracle/MyBatis SQL template only, preserving MyBatis dynamic tags unless a mapping rule requires a local SQL expression change."
 }

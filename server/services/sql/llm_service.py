@@ -311,9 +311,25 @@ def _normalize_oracle_sql(sql_text: str) -> str:
 
 def _has_unquoted_semicolon(sql_text: str) -> bool:
     in_single_quote = False
+    in_xml_tag = False
+    xml_attr_quote = ""
     idx = 0
     while idx < len(sql_text):
         ch = sql_text[idx]
+        if in_xml_tag:
+            if xml_attr_quote:
+                if ch == xml_attr_quote:
+                    xml_attr_quote = ""
+                idx += 1
+                continue
+            if ch in ("'", '"'):
+                xml_attr_quote = ch
+                idx += 1
+                continue
+            if ch == ">":
+                in_xml_tag = False
+            idx += 1
+            continue
         if in_single_quote:
             if ch == "'":
                 if idx + 1 < len(sql_text) and sql_text[idx + 1] == "'":
@@ -326,6 +342,12 @@ def _has_unquoted_semicolon(sql_text: str) -> bool:
             in_single_quote = True
             idx += 1
             continue
+        if ch == "<":
+            tag_match = re.match(r"</?\s*[A-Za-z][A-Za-z0-9:_-]*(?:\s|/?>)", sql_text[idx:])
+            if tag_match:
+                in_xml_tag = True
+                idx += 1
+                continue
         if ch == ";":
             return True
         idx += 1
