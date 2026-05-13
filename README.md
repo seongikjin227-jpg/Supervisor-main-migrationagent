@@ -112,7 +112,7 @@ NEXT_SQL_INFO 생성 (STATUS=READY) → SQL Agent로 인계
 ### 처리 흐름
 
 ```
-NEXT_SQL_INFO (STATUS: READY / FAIL / SKIP / PENDING / NULL)
+NEXT_SQL_INFO (STATUS: URGENT / READY / FAIL / SKIP / PENDING / NULL)
         │
         ▼
 1. Generate TO-BE SQL  — LLM이 FR_SQL_TEXT 또는 EDIT_FR_SQL 기반으로 변환
@@ -139,11 +139,12 @@ STATUS=PASS, TUNED_TEST=READY → Tuning Agent로 인계
 ### 핵심 동작
 
 - **RAG 미사용**: 기본 변환만 수행 (튜닝 룰 적용 없음)
-- **결과 컬럼**: `TO_SQL_TEXT`, `STATUS`, `TUNED_TEST`, `BIND_SQL`, `BIND_SET`
+- **결과 컬럼**: `TO_SQL_TEXT`, `STATUS`, `TUNED_TEST`, `BIND_SQL`, `BIND_SET`, `TEST_SQL`
 - **검증 기준**: 원본 SQL과 TO-BE SQL의 row count 일치 여부
 - **독립 실행**: Migration 결과와 무관하게 `NEXT_SQL_INFO` 상태만 보고 실행
-- **대상 상태**: `READY`, `FAIL`, `SKIP`, `PENDING`, `NULL` 상태를 polling 대상에 포함
-- **선정 우선순위**: `READY` → `FAIL` → `SKIP` → `PENDING` → `NULL`
+- **대상 상태**: `URGENT`, `READY`, `FAIL`, `SKIP`, `PENDING`, `NULL` 상태를 polling 대상에 포함
+- **선정 우선순위**: `URGENT` → `READY` → `FAIL` → `SKIP` → `PENDING` → `NULL`
+- **긴급 디버깅**: 특정 SQL 변환 job을 먼저 실행하고 싶으면 `NEXT_SQL_INFO.STATUS='URGENT'`로 지정
 - **재시도 제한**: `BATCH_CNT < 30` 조건을 만족하는 작업만 polling 대상에 포함
 
 ---
@@ -155,7 +156,7 @@ STATUS=PASS, TUNED_TEST=READY → Tuning Agent로 인계
 ### 처리 흐름
 
 ```
-NEXT_SQL_INFO (TUNED_TEST: READY / FAIL, BATCH_CNT < 30)
+NEXT_SQL_INFO (TUNED_TEST: PASS 제외, BATCH_CNT < 30)
         │
         ▼
 1. Retrieve Rules  — FAISS 임베딩으로 tobe_rule_catalog에서 관련 룰 Top-K 조회
@@ -180,8 +181,11 @@ TUNED_SQL 저장, TUNED_TEST = PASS / FAIL
 - **RAG 엔진**: FAISS CPU 인덱스 + `BAAI/bge-m3` 임베딩 모델
 - **멀티 이터레이션**: `TOBE_SQL_TUNING_MAX_ITERATIONS >= 2`이면 직전 튜닝 결과를 다음 반복 입력으로 사용
 - **재시도 기준**: `BATCH_CNT < 30`인 `FAIL` 작업은 다음 사이클에서 재시도
+- **튜닝 대상 기준**: `STATUS='PASS'`, `TO_SQL_TEXT IS NOT NULL`, `TUNED_TEST!='PASS'`인 작업을 대상으로 함. `TUNED_TEST`가 `READY`, `FAIL`, `NULL`, 기타 미완료 값이어도 재시도 대상에 포함
 - **배치 실행**: Supervisor가 한 batch loop에서 최대 20건까지 dispatch
 - **결과 컬럼**: `TUNED_SQL`, `TUNED_TEST`, `BLOCK_RAG_CONTENT`
+- **실패 SQL 보존**: 튜닝 검증 중 예외가 발생해 `TUNED_TEST='FAIL'`이 되더라도, 그 전에 생성된 `TUNED_SQL`이 있으면 함께 저장
+- **에러 로그 정책**: 튜닝 예외 발생 시 `LOG`에는 최신 `[TUNING_ERROR] ...` 하나만 저장하고 이전 튜닝 에러 로그는 누적하지 않음
 
 ---
 
@@ -208,10 +212,11 @@ STATUS=PASS  ─────────────────────► 
 
 | 컬럼 | 관리 에이전트 | 설명 |
 |------|-------------|------|
-| `STATUS` | SQL Agent | TO-BE SQL 검증 결과 및 실행 대상 상태 (`READY` / `PASS` / `FAIL` / `SKIP`) |
+| `STATUS` | SQL Agent | TO-BE SQL 검증 결과 및 실행 대상 상태 (`URGENT` / `READY` / `PASS` / `FAIL` / `SKIP` / `PENDING`) |
 | `TO_SQL_TEXT` | SQL Agent | 변환된 TO-BE SQL |
 | `BIND_SQL` | SQL Agent | 바인드 값 추출 SQL |
 | `BIND_SET` | SQL Agent | 테스트용 바인드 값 JSON |
+| `TEST_SQL` | SQL Agent | 원본 SQL과 TO-BE SQL의 row count 비교용 검증 SQL |
 | `TUNED_SQL` | Tuning Agent | 최종 튜닝 SQL |
 | `TUNED_TEST` | Tuning Agent | 튜닝 상태 (`READY` / `PASS` / `FAIL`) |
 | `BLOCK_RAG_CONTENT` | Tuning Agent | 프롬프트에 사용된 RAG 룰 JSON |
@@ -324,8 +329,9 @@ print(materialize_sql(sql, {"userId": 100}))
 | `binding_service.py` | MyBatis bind 파라미터 추출, bind case 최대 3개 구성, JSON 직렬화 | 없음 |
 | `validation_service.py` | LLM이 만든 bind/test SQL 실행, row count 검증 결과 판정 | 없음 |
 | `tobe_sql_tuning_service.py` | `NEXT_SQL_RULES` 또는 JSON fallback에서 범용/검색 튜닝 룰 로드, FAISS/임베딩 검색, 실패 시 토큰 검색 fallback | 없음 |
-| `prompt_service.py` | `server/config/prompts/*.json` 프롬프트 템플릿 로드 | 없음 |
+| `prompt_service.py` | `server/config/prompts/*.json` 프롬프트 템플릿 로드, SQL/JSON 입력을 LLM 친화적인 fenced block/text 구조로 렌더링 | 없음 |
 | `llm_service.py` | TO-BE SQL, bind SQL, test SQL, 튜닝 SQL 생성을 위한 LLM 호출 래퍼 | 없음 |
+| `sql_formatting_service.py` | DB 저장 전 SQL 가독성 확인용 포맷팅 헬퍼. 현재 자동 저장 경로에는 연결하지 않음 | 없음 |
 | `batch_scheduler.py` | `NEXT_SQL_INFO`를 1분마다 폴링하는 SQL 변환/튜닝 단독 스케줄러 | 가능 |
 
 `batch_scheduler.py`는 Supervisor 없이 SQL 파이프라인만 돌리고 싶을 때 사용할 수 있습니다.
@@ -335,6 +341,35 @@ python -m server.services.sql.batch_scheduler
 ```
 
 다만 기본 운영 경로는 `python main.py`입니다. Supervisor는 Migration, SQL Conversion, SQL Tuning 대기열을 함께 polling하고, 각 에이전트별로 최대 20건씩 dispatch하므로 전체 파이프라인 운영에는 Supervisor 실행을 우선 사용합니다.
+
+### SQL 프롬프트 렌더링과 디버깅
+
+SQL 계열 프롬프트(`tobe_sql_prompt.json`, `bind_sql_prompt.json`, `tobe_sql_tuning_prompt.json`)는 JSON 템플릿을 로드하되, LLM에 전달할 때는 전체 payload를 JSON 문자열로 직렬화하지 않습니다. `prompt_service.py`가 다음 기준으로 system message를 재구성합니다.
+
+- SQL 입력(`from_sql`, `tobe_sql`, `current_tobe_sql`)은 ```sql fenced block으로 전달
+- `bind_param_metadata_json`, `bind_target_hints_json`, `searched_tuning_rule_block_rag_json`, `universal_tuning_rules`는 프롬프트 조합 단계에서 파싱 후 text 구조로 펼쳐 전달
+- 입력 문자열 안의 리터럴 `\n`, `\t`와 실제 tab은 프롬프트 조합 단계에서 줄바꿈/공백으로 정규화
+- `rules` 배열은 bullet list로 전달
+
+실제 LLM에 들어가는 프롬프트를 파일로 확인하려면 `server/services/sql/PROMPT_DEBUG_SNIPPET.md`의 스니펫을 임시로 `prompt_service.py`에 복사해서 사용합니다. 디버그 실행 시 사람이 읽을 `.md` 파일과 원재료 확인용 `.json` 파일이 아래 경로에 생성됩니다.
+
+```text
+server/services/sql/debug_prompts/
+```
+
+프롬프트 디버깅 파일에는 SQL 원문과 매핑 정보가 남을 수 있으므로, 확인 후 삭제하고 스니펫은 원래 코드로 되돌립니다.
+
+### SQL 저장 포맷팅 가이드
+
+`TEST_SQL`은 검증용 중첩 쿼리 특성상 한 줄로 길어지기 쉽습니다. SQL 저장 가독성 기준은 `server/services/sql/SQL_FORMATTING_GUIDE.md`에 문서화되어 있고, 수동 확인용 포맷터는 `server/services/sql/sql_formatting_service.py`에 분리되어 있습니다.
+
+```python
+from server.services.sql.sql_formatting_service import format_sql_for_storage
+
+formatted_test_sql = format_sql_for_storage(state.test_sql)
+```
+
+현재 포맷터는 자동 저장 경로에 연결되어 있지 않습니다. 저장 시점에 자동 적용하려면 `server/repositories/sql/result_repository.py`의 `update_cycle_result()`에서 payload 생성 전에 연결합니다.
 
 ### 튜닝 룰 테이블과 보조 스크립트
 
@@ -528,6 +563,10 @@ streamlit run app/app.py
     │       ├── mybatis_materializer_service.py
     │       ├── binding_service.py
     │       ├── validation_service.py
+    │       ├── prompt_service.py
+    │       ├── sql_formatting_service.py
+    │       ├── PROMPT_DEBUG_SNIPPET.md
+    │       ├── SQL_FORMATTING_GUIDE.md
     │       └── data/rag/tobe_rule_catalog.json
     ├── repositories/              # DB 접근 레이어
     ├── core/                      # DB 연결·LLM 클라이언트·로거

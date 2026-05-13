@@ -193,7 +193,7 @@ def get_pending_jobs() -> list[SqlInfoJob]:
     return jobs
 
 def get_tuning_jobs() -> list:
-    """Return tuning jobs with TUNED_TEST READY/FAIL under the retry limit."""
+    """Return unfinished tuning jobs under the retry limit."""
     table = get_result_table()
     available_columns = _get_available_columns(table)
     if "TUNED_TEST" not in available_columns:
@@ -214,7 +214,7 @@ def get_tuning_jobs() -> list:
                TO_SQL_TEXT, {tuned_sql_column}, TUNED_TEST, BIND_SQL, BIND_SET, TEST_SQL, STATUS, LOG,
                UPD_TS, EDITED_YN, {select_correct_cols}
         FROM {table}
-        WHERE UPPER(TRIM(TUNED_TEST)) IN ('READY', 'FAIL')
+        WHERE (TUNED_TEST IS NULL OR UPPER(TRIM(TUNED_TEST)) <> 'PASS')
           AND TO_SQL_TEXT IS NOT NULL
           AND UPPER(TRIM(STATUS)) = 'PASS'
           {batch_limit_clause}
@@ -249,7 +249,7 @@ def update_tuning_error(row_id: str, error_msg: str, tuned_sql: str | None = Non
         UPDATE {table}
         SET {tuned_test_clause}
             {tuned_sql_clause}
-            LOG = SUBSTR(NVL(LOG, '') || CHR(10) || '[TUNING_ERROR] ' || :err, 1, 4000),
+            LOG = SUBSTR('[TUNING_ERROR] ' || :err, 1, 4000),
             UPD_TS = SYSDATE
         WHERE ROWID = CHARTOROWID(:rid)
     """
