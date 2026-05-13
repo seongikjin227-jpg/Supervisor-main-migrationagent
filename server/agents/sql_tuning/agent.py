@@ -24,6 +24,7 @@ class SqlTuningAgent:
     def process_job(self, job) -> None:
         """SQL 튜닝 작업 1건을 처리합니다."""
         job_key = f"{job.space_nm}.{job.sql_id}"
+        state = None
         try:
             state = JobExecutionState(
                 job=job,
@@ -56,4 +57,8 @@ class SqlTuningAgent:
 
         except Exception as exc:
             logger.error(f"[SqlTuningAgent] {job_key} 처리 오류: {exc}")
-            update_tuning_error(job.row_id, str(exc))
+            update_tuning_error(
+                job.row_id,
+                str(exc),
+                tuned_sql=state.tuned_sql if state and state.tuned_sql else None,
+            )

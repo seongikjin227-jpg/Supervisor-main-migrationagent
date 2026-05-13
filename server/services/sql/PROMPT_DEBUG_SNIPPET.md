@@ -17,7 +17,7 @@ def build_prompt_messages(filename: str, **kwargs) -> list[dict[str, str]]:
     payload = render_prompt_template(filename, **kwargs)
     user_instruction = payload.pop("user_instruction", "Generate one executable Oracle SQL statement only.")
     messages = [
-        {"role": "system", "content": json.dumps(payload, ensure_ascii=False, indent=2)},
+        {"role": "system", "content": _render_message_content(payload)},
         {"role": "user", "content": str(user_instruction)},
     ]
 
@@ -29,14 +29,30 @@ def build_prompt_messages(filename: str, **kwargs) -> list[dict[str, str]]:
     if filename in debug_prompt_files:
         debug_dir = Path(__file__).resolve().parent / "debug_prompts"
         debug_dir.mkdir(exist_ok=True)
-        debug_path = debug_dir / f"{Path(filename).stem}_debug.json"
-        debug_path.write_text(
+
+        stem = Path(filename).stem
+        md_path = debug_dir / f"{stem}_debug.md"
+        json_path = debug_dir / f"{stem}_debug_payload.json"
+
+        md_path.write_text(
+            "\n\n".join(
+                [
+                    f"# {filename}",
+                    "## system",
+                    messages[0]["content"],
+                    "## user",
+                    messages[1]["content"],
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        json_path.write_text(
             json.dumps(
                 {
                     "filename": filename,
                     "kwargs": kwargs,
                     "payload": payload,
-                    "messages": messages,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -55,19 +71,25 @@ def build_prompt_messages(filename: str, **kwargs) -> list[dict[str, str]]:
 server/services/sql/debug_prompts/
 ```
 
-생성 파일:
+주로 볼 파일:
 
 ```text
-tobe_sql_prompt_debug.json
-tobe_sql_tuning_prompt_debug.json
-bind_sql_prompt_debug.json
+tobe_sql_prompt_debug.md
+tobe_sql_tuning_prompt_debug.md
+bind_sql_prompt_debug.md
 ```
 
-## 확인 포인트
+참고용 원재료 파일:
 
-- `kwargs`: 템플릿 치환 전 원재료 값
-- `payload`: JSON 템플릿에 값이 치환된 결과
-- `messages[0].content`: 실제 LLM system message
-- `messages[1].content`: 실제 LLM user message
+```text
+tobe_sql_prompt_debug_payload.json
+tobe_sql_tuning_prompt_debug_payload.json
+bind_sql_prompt_debug_payload.json
+```
+
+## 확인 기준
+
+- `.md`: 실제 `messages[0].content`, `messages[1].content`를 사람이 읽는 형태로 확인합니다.
+- `.json`: `kwargs`, `payload` 원재료를 확인합니다. JSON 파일 특성상 줄바꿈은 `\n`으로 보일 수 있습니다.
 
 디버깅이 끝나면 반드시 원래 `build_prompt_messages()` 코드로 되돌립니다. SQL 원문과 매핑 정보가 파일에 남을 수 있습니다.

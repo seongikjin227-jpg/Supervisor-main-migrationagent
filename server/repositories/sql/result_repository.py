@@ -233,14 +233,22 @@ def get_tuning_jobs() -> list:
     return jobs
 
 
-def update_tuning_error(row_id: str, error_msg: str) -> None:
+def update_tuning_error(row_id: str, error_msg: str, tuned_sql: str | None = None) -> None:
     """Record a tuning error and mark the row as retryable FAIL."""
     table = get_result_table()
     available_columns = _get_available_columns(table)
+    payload = _fit_payload_to_column_limits(
+        table=table,
+        values={
+            "TUNED_SQL": tuned_sql if "TUNED_SQL" in available_columns else None,
+        },
+    )
     tuned_test_clause = "TUNED_TEST = 'FAIL'," if "TUNED_TEST" in available_columns else ""
+    tuned_sql_clause = "TUNED_SQL = :tuned_sql," if payload["TUNED_SQL"] else ""
     query = f"""
         UPDATE {table}
         SET {tuned_test_clause}
+            {tuned_sql_clause}
             LOG = SUBSTR(NVL(LOG, '') || CHR(10) || '[TUNING_ERROR] ' || :err, 1, 4000),
             UPD_TS = SYSDATE
         WHERE ROWID = CHARTOROWID(:rid)
@@ -248,7 +256,10 @@ def update_tuning_error(row_id: str, error_msg: str) -> None:
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(query, {"err": error_msg, "rid": row_id})
+            params = {"err": error_msg, "rid": row_id}
+            if tuned_sql_clause:
+                params["tuned_sql"] = payload["TUNED_SQL"]
+            cursor.execute(query, params)
             conn.commit()
     except Exception as e:
         logger.error(f"[Repo] Tuning error update failed: {e}")
