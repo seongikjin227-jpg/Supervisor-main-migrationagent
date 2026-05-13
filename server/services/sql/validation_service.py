@@ -149,8 +149,6 @@ def _prepare_runtime_sql(sql_text: str, stage: str) -> str:
                 "MyBatis tags/placeholders must be fully resolved before execution."
             )
 
-    if _has_unquoted_semicolon(clean_sql):
-        raise DBSqlError(f"{stage} generated multiple SQL statements; only one statement is allowed.")
     return clean_sql
 
 
@@ -176,48 +174,3 @@ def _normalize_select_row_limit(sql_text: str) -> str:
 
     return text
 
-
-def _has_unquoted_semicolon(sql_text: str) -> bool:
-    in_single_quote = False
-    in_xml_tag = False
-    xml_attr_quote = ""
-    idx = 0
-    length = len(sql_text)
-    while idx < length:
-        ch = sql_text[idx]
-        if in_xml_tag:
-            if xml_attr_quote:
-                if ch == xml_attr_quote:
-                    xml_attr_quote = ""
-                idx += 1
-                continue
-            if ch in ("'", '"'):
-                xml_attr_quote = ch
-                idx += 1
-                continue
-            if ch == ">":
-                in_xml_tag = False
-            idx += 1
-            continue
-        if in_single_quote:
-            if ch == "'":
-                if idx + 1 < length and sql_text[idx + 1] == "'":
-                    idx += 2
-                    continue
-                in_single_quote = False
-            idx += 1
-            continue
-        if ch == "'":
-            in_single_quote = True
-            idx += 1
-            continue
-        if ch == "<":
-            tag_match = re.match(r"</?\s*[A-Za-z][A-Za-z0-9:_-]*(?:\s|/?>)", sql_text[idx:])
-            if tag_match:
-                in_xml_tag = True
-                idx += 1
-                continue
-        if ch == ";":
-            return True
-        idx += 1
-    return False

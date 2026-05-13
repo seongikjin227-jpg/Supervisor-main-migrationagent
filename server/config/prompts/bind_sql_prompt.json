@@ -17,14 +17,17 @@
     "conditional_bind_params에 나열된 파라미터는 MyBatis <if> 블록 안에서 사용되는 선택 파라미터입니다. 해당 test 표현식을 만족하는 후보 row에서만 NULL이 아닌 값이 되도록 하십시오.",
     "각 출력 컬럼 alias는 바인드 파라미터명과 정확히 일치해야 하며, 따옴표 없는 Oracle alias를 사용하십시오.",
     "bind_target_hints_json을 바인드 파라미터명과 실제 소스 컬럼 사이의 우선 매핑 기준으로 사용하십시오.",
+    "from_sql 또는 tobe_sql에 WITH 절 CTE, 인라인 뷰, 서브쿼리로 정의된 가상 테이블이 있다면 해당 정의 SQL을 함께 포함하거나 보존하십시오. 가상 테이블 이름만 참조하여 실제 테이블처럼 조회하지 마십시오.",
     "조합의 유효성을 보존하십시오. 여러 바인드 파라미터 값은 같은 실제 소스 row 또는 원본 쿼리의 조인 조건으로 연결된 row에서 나와야 합니다. 서로 무관한 row에서 독립적으로 고른 값을 조합하지 마십시오.",
     "동일 소스 테이블 또는 원본 조인 row 구조에서 SELECT DISTINCT를 사용하는 방식을 우선하십시오. 서로 다른 바인드 컬럼을 채우기 위해 독립 scalar subquery, cross join, 무관한 파라미터 값의 UNION, 인위적인 Cartesian 조합을 사용하지 마십시오.",
+    "SELECT DISTINCT와 윈도우 함수(분석 함수)를 함께 사용할 때 결과 행 중복 제거 기준이 의도와 달라질 수 있으므로 충돌에 주의하십시오.",
     "조건부 <if> test를 만족하지 않는 후보 row에서는 비활성 블록 안에서만 사용되는 파라미터를 NULL로 반환하십시오.",
     "사용 가능한 바인드 파라미터나 소스 컬럼으로 MyBatis <if test> 표현식을 평가할 수 없다면 해당 <if> 블록은 비활성으로 간주하고, 활성화만을 위해 값을 지어내지 마십시오.",
     "실제 데이터에 NULL 및 NULL이 아닌 선택 파라미터 조합이 존재한다면, 이를 커버하는 작지만 유용한 distinct 바인드 케이스 집합을 생성하십시오.",
     "Oracle 11g 호환 문법만 사용하십시오. LIMIT, FETCH FIRST, OFFSET 또는 Oracle이 아닌 함수를 사용하지 마십시오.",
     "MyBatis 태그, placeholder, markdown, 주석, JSON, 여러 SQL 문을 출력하지 마십시오.",
+    "SQL 끝에 세미콜론(;)을 붙이지 마십시오.",
     "row 제한이 필요하면 Oracle ROWNUM을 사용하여 최대 50개 후보 row만 반환하십시오."
   ],
-  "user_instruction": "Generate one executable Oracle SELECT statement only. The query must return valid same-row bind parameter combinations, not independently mixed parameter values."
+  "user_instruction": "Generate one executable Oracle SELECT statement only. The query must return valid same-row bind parameter combinations, not independently mixed parameter values. Do not end the SQL with a semicolon."
 }

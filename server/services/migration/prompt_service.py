@@ -46,4 +46,6 @@ def build_migration_prompt(
     if is_append:
         prompt += t["append_mode_suffix"].format(to_table=to_table)
 
+    prompt += "\n\n[Output constraint]\n- Do not end migration_sql or verification_sql with a semicolon (;).\n"
+
     return t["system_anthropic"], t["system_openai"], prompt

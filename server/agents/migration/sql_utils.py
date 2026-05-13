@@ -12,14 +12,7 @@ def split_sql_script(script: str) -> list[str]:
         if not clean_part:
             continue
 
-        content_only = re.sub(r'--.*$', '', clean_part, flags=re.MULTILINE)
-        content_only = re.sub(r'/\*.*?\*/', '', content_only, flags=re.DOTALL).strip()
-
-        if re.match(r'^(BEGIN|DECLARE)', content_only, re.IGNORECASE):
-            statements.append(clean_part)
-        else:
-            sub_stmts = [s.strip() for s in clean_part.split(';') if s.strip()]
-            statements.extend(sub_stmts)
+        statements.append(clean_part)
 
     return statements
 

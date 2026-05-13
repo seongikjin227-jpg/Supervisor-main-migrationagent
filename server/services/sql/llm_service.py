@@ -345,56 +345,9 @@ def _normalize_oracle_sql(sql_text: str) -> str:
     text = re.sub(r"\s+\n", "\n", text)
     text = text.strip().rstrip(";").strip()
 
-    if _has_unquoted_semicolon(text):
-        raise ValueError("LLM response must contain exactly one SQL statement.")
     if not text:
         raise ValueError("LLM returned an empty SQL statement after normalization.")
     return text
-
-
-def _has_unquoted_semicolon(sql_text: str) -> bool:
-    in_single_quote = False
-    in_xml_tag = False
-    xml_attr_quote = ""
-    idx = 0
-    while idx < len(sql_text):
-        ch = sql_text[idx]
-        if in_xml_tag:
-            if xml_attr_quote:
-                if ch == xml_attr_quote:
-                    xml_attr_quote = ""
-                idx += 1
-                continue
-            if ch in ("'", '"'):
-                xml_attr_quote = ch
-                idx += 1
-                continue
-            if ch == ">":
-                in_xml_tag = False
-            idx += 1
-            continue
-        if in_single_quote:
-            if ch == "'":
-                if idx + 1 < len(sql_text) and sql_text[idx + 1] == "'":
-                    idx += 2
-                    continue
-                in_single_quote = False
-            idx += 1
-            continue
-        if ch == "'":
-            in_single_quote = True
-            idx += 1
-            continue
-        if ch == "<":
-            tag_match = re.match(r"</?\s*[A-Za-z][A-Za-z0-9:_-]*(?:\s|/?>)", sql_text[idx:])
-            if tag_match:
-                in_xml_tag = True
-                idx += 1
-                continue
-        if ch == ";":
-            return True
-        idx += 1
-    return False
 
 
 def _to_langchain_messages(messages: list[dict[str, str]]):
@@ -411,7 +364,12 @@ def _ensure_anthropic_message_requirements(messages: list[dict[str, str]]) -> li
     safe = list(messages or [])
     has_user_or_assistant = any((message.get("role") or "").lower() in {"user", "assistant"} for message in safe)
     if not has_user_or_assistant:
-        safe.append({"role": "user", "content": "Generate one executable Oracle SQL statement only."})
+        safe.append(
+            {
+                "role": "user",
+                "content": "Generate one executable Oracle SQL statement only. Do not end the SQL with a semicolon.",
+            }
+        )
     return safe
 
 

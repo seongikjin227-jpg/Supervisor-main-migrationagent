@@ -21,7 +21,10 @@ def render_prompt_template(filename: str, **kwargs) -> dict[str, Any]:
 
 def build_prompt_messages(filename: str, **kwargs) -> list[dict[str, str]]:
     payload = render_prompt_template(filename, **kwargs)
-    user_instruction = payload.pop("user_instruction", "Generate one executable Oracle SQL statement only.")
+    user_instruction = payload.pop(
+        "user_instruction",
+        "Generate one executable Oracle SQL statement only. Do not end the SQL with a semicolon.",
+    )
     return [
         {"role": "system", "content": _render_message_content(payload)},
         {"role": "user", "content": str(user_instruction)},

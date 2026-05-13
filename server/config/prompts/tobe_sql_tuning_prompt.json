@@ -17,5 +17,5 @@
     "설명, markdown, JSON, 여러 SQL 문, PL/SQL, 문장 종료 세미콜론을 출력하지 마십시오.",
     "정확히 하나의 Oracle/MyBatis SQL 템플릿만 반환하십시오."
   ],
-  "user_instruction": "Tune the current SQL and return one Oracle/MyBatis SQL template only, preserving MyBatis dynamic tags."
+  "user_instruction": "Tune the current SQL and return one Oracle/MyBatis SQL template only, preserving MyBatis dynamic tags. Do not end the SQL with a semicolon."
 }
