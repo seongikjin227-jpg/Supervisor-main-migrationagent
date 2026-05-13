@@ -10,21 +10,21 @@
     "last_error": "{last_error}"
   },
   "rules": [
-    "Return only one executable SELECT statement.",
-    "Use real table data rather than synthetic literals.",
-    "Read bind_param_metadata_json. Return every parameter listed in all_bind_params as one SELECT output column.",
-    "Parameters listed in required_bind_params are mandatory parameters outside MyBatis <if> blocks. Prefer non-NULL real values for them whenever real data exists.",
-    "Parameters listed in conditional_bind_params are optional parameters used inside MyBatis <if> blocks. They should be non-NULL only for candidate rows where the corresponding test expression is satisfied.",
-    "Each output column alias must exactly match the bind parameter name and should be an unquoted Oracle alias.",
-    "Use bind_target_hints_json as the primary mapping from bind parameter names to physical source columns.",
-    "Preserve combination validity: values for multiple bind parameters must come from the same real source row or from rows connected by the query's original join predicates. Do not combine values selected independently from unrelated rows.",
-    "Prefer SELECT DISTINCT from the same source table or from the original joined row shape. Do not use independent scalar subqueries, cross joins, UNION of unrelated parameter values, or synthetic Cartesian combinations to fill different bind columns.",
-    "For candidate rows where a conditional <if> test is not satisfied, parameters used only inside that inactive block must be returned as NULL.",
-    "If a MyBatis <if test> expression cannot be evaluated from available bind parameters or source columns, treat that <if> block as inactive and do not invent values only to activate it.",
-    "Generate a small but useful set of distinct bind cases that covers both NULL and non-NULL optional parameters when those combinations exist in real data.",
-    "Use Oracle 11g-compatible syntax only. Do not use LIMIT, FETCH FIRST, OFFSET, or non-Oracle functions.",
-    "Do not emit MyBatis tags, placeholders, markdown, comments, JSON, or multiple statements.",
-    "Limit output to at most 50 candidate rows using Oracle ROWNUM if a row limit is needed."
+    "실행 가능한 SELECT 문 하나만 반환하십시오.",
+    "임의로 만든 리터럴 값이 아니라 실제 테이블 데이터를 사용하십시오.",
+    "bind_param_metadata_json을 읽고, all_bind_params에 나열된 모든 파라미터를 SELECT 출력 컬럼으로 반환하십시오.",
+    "required_bind_params에 나열된 파라미터는 MyBatis <if> 블록 밖의 필수 파라미터입니다. 실제 데이터가 존재하면 가능한 한 NULL이 아닌 실제 값을 사용하십시오.",
+    "conditional_bind_params에 나열된 파라미터는 MyBatis <if> 블록 안에서 사용되는 선택 파라미터입니다. 해당 test 표현식을 만족하는 후보 row에서만 NULL이 아닌 값이 되도록 하십시오.",
+    "각 출력 컬럼 alias는 바인드 파라미터명과 정확히 일치해야 하며, 따옴표 없는 Oracle alias를 사용하십시오.",
+    "bind_target_hints_json을 바인드 파라미터명과 실제 소스 컬럼 사이의 우선 매핑 기준으로 사용하십시오.",
+    "조합의 유효성을 보존하십시오. 여러 바인드 파라미터 값은 같은 실제 소스 row 또는 원본 쿼리의 조인 조건으로 연결된 row에서 나와야 합니다. 서로 무관한 row에서 독립적으로 고른 값을 조합하지 마십시오.",
+    "동일 소스 테이블 또는 원본 조인 row 구조에서 SELECT DISTINCT를 사용하는 방식을 우선하십시오. 서로 다른 바인드 컬럼을 채우기 위해 독립 scalar subquery, cross join, 무관한 파라미터 값의 UNION, 인위적인 Cartesian 조합을 사용하지 마십시오.",
+    "조건부 <if> test를 만족하지 않는 후보 row에서는 비활성 블록 안에서만 사용되는 파라미터를 NULL로 반환하십시오.",
+    "사용 가능한 바인드 파라미터나 소스 컬럼으로 MyBatis <if test> 표현식을 평가할 수 없다면 해당 <if> 블록은 비활성으로 간주하고, 활성화만을 위해 값을 지어내지 마십시오.",
+    "실제 데이터에 NULL 및 NULL이 아닌 선택 파라미터 조합이 존재한다면, 이를 커버하는 작지만 유용한 distinct 바인드 케이스 집합을 생성하십시오.",
+    "Oracle 11g 호환 문법만 사용하십시오. LIMIT, FETCH FIRST, OFFSET 또는 Oracle이 아닌 함수를 사용하지 마십시오.",
+    "MyBatis 태그, placeholder, markdown, 주석, JSON, 여러 SQL 문을 출력하지 마십시오.",
+    "row 제한이 필요하면 Oracle ROWNUM을 사용하여 최대 50개 후보 row만 반환하십시오."
   ],
   "user_instruction": "Generate one executable Oracle SELECT statement only. The query must return valid same-row bind parameter combinations, not independently mixed parameter values."
 }

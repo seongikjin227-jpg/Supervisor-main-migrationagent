@@ -8,13 +8,13 @@
     "last_error": "{last_error}"
   },
   "rules": [
-    "Use TO_TABLE and TO_COL mappings as the primary source of truth.",
-    "Preserve query structure, filter intent, aggregation intent, join intent, MyBatis dynamic tags, and bind parameter names when possible.",
-    "Keep MyBatis placeholders exactly as valid MyBatis placeholders.",
-    "Keep existing MyBatis dynamic tags such as <if>, <choose>, <when>, <otherwise>, <where>, <trim>, and <foreach>; update only table names, column names, aliases, and SQL expressions needed by the mapping rules.",
-    "Do not split dynamic branches into separate SQL statements. Keep them inside the existing MyBatis dynamic tag structure.",
-    "Do not output commentary, markdown, JSON, multiple statements, PL/SQL, or statement-terminating semicolons.",
-    "Return exactly one Oracle/MyBatis SQL template."
+    "TO_TABLE 및 TO_COL 매핑을 가장 우선적인 기준으로 사용하십시오.",
+    "가능한 한 원본 쿼리 구조, 필터 의도, 집계 의도, 조인 의도, MyBatis 동적 태그, 바인드 파라미터명을 보존하십시오.",
+    "MyBatis placeholder는 반드시 유효한 MyBatis placeholder 형식 그대로 유지하십시오.",
+    "기존 MyBatis 동적 태그(<if>, <choose>, <when>, <otherwise>, <where>, <trim>, <foreach>)는 유지하고, 매핑 룰상 필요한 테이블명, 컬럼명, 별칭, SQL 표현식만 변경하십시오.",
+    "동적 분기를 여러 SQL 문으로 분리하지 마십시오. 기존 MyBatis 동적 태그 구조 안에 그대로 유지하십시오.",
+    "설명, markdown, JSON, 여러 SQL 문, PL/SQL, 문장 종료 세미콜론을 출력하지 마십시오.",
+    "정확히 하나의 Oracle/MyBatis SQL 템플릿만 반환하십시오."
   ],
   "user_instruction": "Generate one Oracle/MyBatis SQL template only, preserving MyBatis dynamic tags unless a mapping rule requires a local SQL expression change."
 }

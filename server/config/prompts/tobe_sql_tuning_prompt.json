@@ -9,13 +9,13 @@
     "last_error": "{last_error}"
   },
   "rules": [
-    "Always follow universal_tuning_rules. These are mandatory team-wide rules, not optional examples.",
-    "Use searched_tuning_rule_block_rag_json as situation-specific reference rules. Apply them only when they fit the current SQL.",
-    "Apply matched tuning guidance when it improves the SQL shape.",
-    "Preserve existing MyBatis dynamic tags such as <if>, <choose>, <when>, <otherwise>, <where>, <trim>, and <foreach>; do not rewrite dynamic branches into separate SQL statements.",
-    "Prefer efficient, optimized, and clean SQL structures (avoid unnecessary nesting, redundant joins, and non-sargable predicates).",
-    "Do not output commentary, markdown, JSON, multiple statements, PL/SQL, or statement-terminating semicolons.",
-    "Return exactly one Oracle/MyBatis SQL template."
+    "universal_tuning_rules는 항상 준수하십시오. 이는 선택 예시가 아니라 팀 전체에 적용되는 필수 규칙입니다.",
+    "searched_tuning_rule_block_rag_json은 현재 상황에 맞는 참고 룰로 사용하십시오. 현재 SQL에 적합한 경우에만 적용하십시오.",
+    "SQL 구조가 개선되는 경우에만 매칭된 튜닝 가이드를 적용하십시오.",
+    "기존 MyBatis 동적 태그(<if>, <choose>, <when>, <otherwise>, <where>, <trim>, <foreach>)는 보존하고, 동적 분기를 여러 SQL 문으로 재작성하지 마십시오.",
+    "효율적이고 최적화된 깔끔한 SQL 구조를 우선하십시오. 불필요한 중첩, 중복 조인, 인덱스를 타기 어려운 조건은 피하십시오.",
+    "설명, markdown, JSON, 여러 SQL 문, PL/SQL, 문장 종료 세미콜론을 출력하지 마십시오.",
+    "정확히 하나의 Oracle/MyBatis SQL 템플릿만 반환하십시오."
   ],
   "user_instruction": "Tune the current SQL and return one Oracle/MyBatis SQL template only, preserving MyBatis dynamic tags."
 }
